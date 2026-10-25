@@ -26,11 +26,23 @@ final class CanvasSession {
     static let morphDuration = 0.6
     static let maxRecentColors = 10
 
-    let layer = TiledLayer(name: "Calque 1", width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
-    let history = UndoRedoManager()
+    private(set) var layer = TiledLayer(name: "Calque 1", width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
+    private(set) var history = UndoRedoManager()
 
     /// Créé par le coordinateur Metal (il faut le GPU).
     @ObservationIgnored var canvas: LayerCanvas?
+    @ObservationIgnored var device: (any MTLDevice)?
+
+    // Fichier (voir ProjectFiles.swift)
+    var projectName = "Sans titre"
+    var projectCreatedAt = Date()
+    var showProjects = false
+    var showExport = false
+    var fileMessage: String?
+    var isExporting = false
+    var exportProgress = 0.0
+    var lastExportURL: URL?
+    @ObservationIgnored var exportCancel: CancelFlag?
     /// Lu à chaque image et modifié par les gestes : hors observation pour ne pas redessiner SwiftUI en continu.
     @ObservationIgnored var view = ViewState()
 
@@ -178,7 +190,18 @@ final class CanvasSession {
         if entry.isSpilled { canvas?.invalidateAll() } else { canvas?.invalidate(entry.deltas.map(\.coord)) }
     }
 
-    private func refreshHistory() {
+    /// Remplace le calque (nouveau projet, ouverture) : nouvelle texture GPU, historique vidé.
+    func replaceLayer(_ newLayer: TiledLayer) {
+        strokeCancelled()
+        layer = newLayer
+        history = UndoRedoManager()
+        let canvas = LayerCanvas(layer: newLayer, device: device)
+        canvas.blendSpace = blendSpace
+        self.canvas = canvas
+        refreshHistory()
+    }
+
+    func refreshHistory() {
         canUndo = history.canUndo
         canRedo = history.canRedo
     }
@@ -266,6 +289,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         self.device = device
         queue = device?.makeCommandQueue()
         renderer = device.flatMap { try? PanoramaRenderer(device: $0) }
+        session.device = device
         if session.canvas == nil {
             let canvas = LayerCanvas(layer: session.layer, device: device)
             canvas.blendSpace = session.blendSpace
@@ -479,6 +503,9 @@ struct CanvasToolbar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
+                FileMenu(session: session)
+                    .fixedSize()
+
                 Picker("Vue", selection: Binding(get: { session.mode }, set: { session.setMode($0) })) {
                     ForEach(ViewMode.allCases, id: \.self) { Text($0.label).tag($0) }
                 }

@@ -41,5 +41,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "ProRange Creator"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIRequiresFullScreen: YES
+        # Projets et exports visibles dans l'app Fichiers (Sur mon iPad > ProRange Creator).
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
     scheme: {}

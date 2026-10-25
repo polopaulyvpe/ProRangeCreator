@@ -15,7 +15,7 @@ let package = Package(
         // Maths, projections, couleur, rasteriseur de référence CPU. Aucune dépendance.
         .target(name: "PRCore"),
         // Codecs, import/export (phase 7).
-        .target(name: "PRImaging", dependencies: ["PRCore"]),
+        .target(name: "PRImaging", dependencies: ["PRCore", "PRStorage"]),
         // Tuiles éparses, format de projet, journal d'opérations (phase 1).
         .target(name: "PRStorage", dependencies: ["PRCore"]),
         // Metal : pinceau, composition, filtres.
@@ -26,5 +26,6 @@ let package = Package(
         .testTarget(name: "PRCoreTests", dependencies: ["PRCore"]),
         .testTarget(name: "PRStorageTests", dependencies: ["PRCore", "PRStorage"]),
         .testTarget(name: "PREngineTests", dependencies: ["PRCore", "PRStorage", "PREngine"]),
+        .testTarget(name: "PRImagingTests", dependencies: ["PRCore", "PRStorage", "PRImaging"]),
     ]
 )
