@@ -3,7 +3,7 @@ import PRCore
 
 /// Calque équirectangulaire en tuiles éparses.
 /// - Une tuile jamais peinte n'existe pas ; une tuile uniforme ne garde qu'un pixel.
-/// - Les tuiles inactives peuvent être recompressées en mémoire (`compact`).
+/// - Les tuiles inactives peuvent être recompressées en mémoire (`compact`) ou déversées sur disque (`spill`).
 /// - Toute écriture passe par `takePixels` / `putPixels`, qui enregistrent l'état d'avant pour l'historique.
 /// Pas thread-safe : un calque appartient à un seul contexte d'exécution.
 public final class TiledLayer {
@@ -15,11 +15,15 @@ public final class TiledLayer {
     public let geometry: EquirectGeometry
     public var opacity: Float = 1
     public var isVisible = true
+    /// Dossier où déverser les tuiles inactives ; sans lui, `spill` ne fait rien.
+    public var spillStore: TileStore?
 
     private enum Content {
         case uniform(Data)
         case pixels([UInt8])
         case packed(Data)
+        /// Compressée dans `spillStore`, plus rien en mémoire.
+        case spilled
     }
 
     private var tiles: [TileCoord: Content] = [:]
@@ -47,7 +51,16 @@ public final class TiledLayer {
             switch content {
             case .uniform(let d), .packed(let d): sum + d.count
             case .pixels(let p): sum + p.count
+            case .spilled: sum
             }
+        }
+    }
+
+    /// Nombre de tuiles actuellement sur disque.
+    public var spilledTileCount: Int {
+        tiles.values.reduce(0) { sum, content in
+            if case .spilled = content { return sum + 1 }
+            return sum
         }
     }
 
@@ -63,10 +76,10 @@ public final class TiledLayer {
             return d.withUnsafeBytes { Self.read($0.baseAddress!, 0, format) }
         case .pixels(let p):
             return p.withUnsafeBytes { Self.read($0.baseAddress!, index, format) }
-        case .packed(let d):
+        case .packed, .spilled:
             // Lecture répétée probable : on garde la tuile décompressée (même contenu, pas d'historique).
-            let p = Self.unpack(d, format: format)
-            tiles[coord] = .pixels(p)
+            let p = Self.unpack(packedData(coord), format: format)
+            setContent(.pixels(p), at: coord)
             return p.withUnsafeBytes { Self.read($0.baseAddress!, index, format) }
         }
     }
@@ -77,7 +90,7 @@ public final class TiledLayer {
         case nil: [UInt8](repeating: 0, count: format.bytesPerTile)
         case .uniform(let d): Self.repeated(d)
         case .pixels(let p): p
-        case .packed(let d): Self.unpack(d, format: format)
+        case .packed, .spilled: Self.unpack(packedData(coord), format: format)
         }
     }
 
@@ -87,16 +100,46 @@ public final class TiledLayer {
         case nil: .absent
         case .uniform(let d): .uniform(d)
         case .pixels(let p): .packed(Self.pack(p))
-        case .packed(let d): .packed(d)
+        case .packed, .spilled: .packed(packedData(coord))
         }
     }
 
     /// Remet une tuile dans un état donné, sans l'enregistrer dans l'historique (annulation, chargement).
     public func restore(_ state: TileState, at coord: TileCoord) {
         switch state {
-        case .absent: tiles[coord] = nil
-        case .uniform(let d): tiles[coord] = .uniform(d)
-        case .packed(let d): tiles[coord] = .packed(d)
+        case .absent: setContent(nil, at: coord)
+        case .uniform(let d): setContent(.uniform(d), at: coord)
+        case .packed(let d): setContent(.packed(d), at: coord)
+        }
+    }
+
+    /// Déverse sur disque les tuiles compressibles hors de `keep`. Renvoie les octets libérés en mémoire.
+    @discardableResult
+    public func spill(keeping keep: Set<TileCoord> = []) throws -> Int {
+        guard let store = spillStore else { return 0 }
+        var freed = 0
+        for (coord, content) in tiles where !keep.contains(coord) {
+            let data: Data
+            switch content {
+            case .pixels(let p):
+                data = Self.pack(p)
+                freed += p.count
+            case .packed(let d):
+                data = d
+                freed += d.count
+            case .uniform, .spilled:
+                continue // un pixel ne vaut pas un fichier
+            }
+            try store.write(.packed(data), at: coord)
+            tiles[coord] = .spilled
+        }
+        return freed
+    }
+
+    /// Supprime tous les fichiers déversés (après les avoir rechargés en mémoire compressée).
+    public func unspillAll() {
+        for (coord, content) in tiles {
+            if case .spilled = content { setContent(.packed(packedData(coord)), at: coord) }
         }
     }
 
@@ -130,7 +173,7 @@ public final class TiledLayer {
             for tx in 0..<tilesAcross {
                 let coord = TileCoord(x: tx, y: ty)
                 willModify(coord)
-                tiles[coord] = isZero ? nil : .uniform(pixel)
+                setContent(isZero ? nil : .uniform(pixel), at: coord)
             }
         }
     }
@@ -216,7 +259,34 @@ public final class TiledLayer {
         case .uniform(let d): return Self.repeated(d)
         case .pixels(let p): return p
         case .packed(let d): return Self.unpack(d, format: format)
+        case .spilled:
+            let p = Self.unpack(readSpilled(coord), format: format)
+            try? spillStore?.delete(coord)
+            return p
         }
+    }
+
+    /// Remplace le contenu d'une tuile en supprimant son fichier déversé s'il y en avait un.
+    private func setContent(_ content: Content?, at coord: TileCoord) {
+        if case .spilled = tiles[coord] { try? spillStore?.delete(coord) }
+        tiles[coord] = content
+    }
+
+    /// Données compressées d'une tuile `.packed` ou `.spilled`.
+    private func packedData(_ coord: TileCoord) -> Data {
+        switch tiles[coord] {
+        case .packed(let d): d
+        case .spilled: readSpilled(coord)
+        default: preconditionFailure("tuile \(coord) ni compressée ni déversée")
+        }
+    }
+
+    private func readSpilled(_ coord: TileCoord) -> Data {
+        // Un fichier de déversement illisible veut dire des pixels perdus : on s'arrête net plutôt que de peindre sur du faux.
+        guard let store = spillStore, case .packed(let d)? = try? store.read(coord) else {
+            fatalError("Tuile déversée \(coord) illisible sur le disque")
+        }
+        return d
     }
 
     /// Range une tuile en la normalisant : uniforme → un pixel, transparente → supprimée.

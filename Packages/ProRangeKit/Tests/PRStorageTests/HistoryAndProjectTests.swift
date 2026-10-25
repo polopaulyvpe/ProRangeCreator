@@ -5,7 +5,7 @@ import XCTest
 
 final class UndoRedoTests: XCTestCase {
     /// Annuler / rétablir restitue l'état exact (octet par octet) après chaque opération.
-    func testUndoRedoIsBitExact() {
+    func testUndoRedoIsBitExact() throws {
         var rng = SplitMix64(state: 42)
         let layer = TiledLayer(name: "t", width: 2048, height: 1024)
         let history = UndoRedoManager()
@@ -19,26 +19,26 @@ final class UndoRedoTests: XCTestCase {
         XCTAssertEqual(history.entries.count, 12)
 
         for i in stride(from: 11, through: 0, by: -1) {
-            XCTAssertNotNil(history.undo(in: [layer]))
+            XCTAssertNotNil(try history.undo(in: [layer]))
             XCTAssertEqual(dump(layer), snapshots[i], "après annulation vers l'état \(i)")
         }
         XCTAssertFalse(history.canUndo)
         XCTAssertTrue(layer.storedTiles.isEmpty)
 
         for i in 1...12 {
-            XCTAssertNotNil(history.redo(in: [layer]))
+            XCTAssertNotNil(try history.redo(in: [layer]))
             XCTAssertEqual(dump(layer), snapshots[i], "après rétablissement vers l'état \(i)")
         }
         XCTAssertFalse(history.canRedo)
     }
 
-    func testNewOperationDropsRedoBranch() {
+    func testNewOperationDropsRedoBranch() throws {
         let layer = TiledLayer(name: "t", width: 1024, height: 512)
         let history = UndoRedoManager()
         let dab = SphericalDab(center: [0, 0, -1], radius: 0.1, hardness: 1, color: [1, 0, 0, 1])
         history.perform("a", on: layer) { layer.stamp(dab) }
         history.perform("b", on: layer) { layer.fill([0, 0, 1, 1]) }
-        history.undo(in: [layer])
+        try history.undo(in: [layer])
         history.perform("c", on: layer) { layer.fill(.zero) }
         XCTAssertEqual(history.entries.map(\.name), ["a", "c"])
         XCTAssertFalse(history.canRedo)
