@@ -31,6 +31,12 @@ gh run view --log-failed
 | `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
 | `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) ; trait annulé sans trace ; trait validé identique entre GPU et calque CPU, puis annulé par l'historique ; repli CPU |
 
+## Suites actuelles (PRImaging)
+
+| Suite | Vérifie |
+|---|---|
+| `ExportTests` | Aller-retour EXR pour toutes les variantes (half ou float, aucune ou ZIP, avec ou sans alpha, dernier bloc incomplet), exact ; ZIP plus de 2× plus petit sur un dégradé ; **relecture par ImageIO** des EXR (toutes variantes) et du Radiance ; aller-retour Radiance (pixels bruts et RLE) dans la précision RGBE ; RLE ; zlib, Adler-32 et prédicteur ; export d'un calque identique à la source, en 2 bandes, sans fichier temporaire restant ; HDR à plus de 45 dB de PSNR ; export réduit et transparent ; annulation sans fichier |
+
 ## Suites actuelles (PRStorage)
 
 | Suite | Vérifie |

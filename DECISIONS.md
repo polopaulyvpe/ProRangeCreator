@@ -15,6 +15,7 @@
 | D6 | 2026-10-25 | Double tap 2 doigts = annuler ; double tap 3 doigts = rétablir ; maintien 2 doigts (0,6 s) = annulation rapide continue (toutes les 0,12 s) | Choix de Paul, conforme au cahier des charges | Sans maintien |
 | — | 2026-10-25 | Pinceau sur GPU dans la texture du calque, puis relecture des tuiles touchées dans le calque CPU en fin de trait | Latence d'une image ; l'historique reste exact (il enregistre ce que le GPU a produit) ; repli CPU si la texture n'est pas à pleine résolution (toile > 8K) | Pinceau CPU + envoi des tuiles (plus lent) |
 | — | 2026-10-25 | Toile de l'écran de travail : 8K par défaut | Le pinceau GPU travaille dans une texture pleine résolution (256 Mo à 8K, 1 Gio à 16K) ; 16K attendra la texture virtuelle | 16K |
+| D10 | 2026-10-25 | **Écrivain OpenEXR maison** en Swift (lignes, half/float, aucune ou ZIP avec zlib du framework Compression) | Recommandation appliquée : pas de C++ à vendre ni à compiler sur la CI, export en flux par bandes ; validé par relecture ImageIO sur la CI. **PIZ non géré** (ondelettes + Huffman, gros chantier) : ZIP est le standard des pipelines UE5/Blender | tinyexr (C++ vendoré) |
 | — | 2026-10-25 | Annulation par **deltas de tuiles compressés** (`UndoRedoManager`), pas par rejeu du journal | Exigé par le cahier des charges (§14) ; exact au bit près, coût indépendant de la longueur de l'historique. Le journal binaire des opérations est gardé pour le timelapse | Checkpoints + rejeu (commit 48c3ee9 d'une autre session : ne restaurait pas les pixels) |
 
 ## Conséquences de l'iPad Air 5

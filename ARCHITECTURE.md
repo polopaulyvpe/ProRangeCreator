@@ -164,3 +164,31 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
 | Double tap 2 doigts | Annuler |
 | Double tap 3 doigts | Rétablir |
 | Maintien 2 doigts (0,6 s) | Annulation rapide continue |
+
+## Export et fichiers (MVP)
+
+### Codecs (PRImaging)
+
+- **OpenEXR** (`EXRWriter` / `EXRReader`) :
+  - image simple partie en lignes, version 2, lignes croissantes ;
+  - canaux par ordre alphabétique : (A,) B, G, R, en half ou float ;
+  - compression aucune (1 ligne par bloc) ou ZIP : blocs de 16 lignes, octets pairs puis impairs, différences +128, flux zlib (DEFLATE du framework Compression avec en-tête et Adler-32) ;
+  - un bloc qui ne rapetisse pas est stocké brut, comme le prévoit OpenEXR ;
+  - attributs requis écrits : `channels`, `compression`, `dataWindow`, `displayWindow`, `lineOrder`, `pixelAspectRatio`, `screenWindowCenter`, `screenWindowWidth` ;
+  - PIZ n'est pas géré (D10).
+- **Radiance** (`RadianceWriter` / `RadianceReader`) :
+  - RGBE, en-tête `#?RADIANCE`, `FORMAT=32-bit_rle_rgbe`, orientation `-Y H +X W` ;
+  - RLE « nouveau style » par canal pour des largeurs de 8 à 32 767 pixels, pixels bruts sinon.
+
+### Export en flux (`PanoramaExporter`, `LayerRowSource`)
+
+- Le calque est lu par **bandes de 256 lignes** (une rangée de tuiles), réduit par moyenne de blocs (1, 2, 4 ou 8), puis composé sur le papier blanc ou laissé transparent. L'image entière n'est jamais en mémoire : une bande fait 64 Mo à 16K.
+- Le fichier est écrit à côté sous un nom temporaire (`.nom.partial`), puis renommé une fois complet. Annuler ou échouer le supprime.
+- La progression est donnée par bande, et le rappel peut annuler l'export.
+- Dans l'app, l'export tourne dans une tâche détachée. La feuille d'export est modale : personne ne peint pendant ce temps.
+- Orientation (préréglages Blender, UE5, Unity), cubemap, PNG, TIFF et lot de résolutions : phase 7.
+
+### Projets dans l'app
+
+- `Documents/Projets/<nom>.prrange` (format `ProjectPackage`) et `Documents/Exports/`. Les deux sont visibles dans l'app Fichiers (`UIFileSharingEnabled`), et l'export propose aussi la feuille de partage.
+- Ouvrir un projet remplace le calque, recrée sa texture GPU et vide l'historique. L'historique ne survit pas à la fermeture : c'est voulu pour le MVP.
