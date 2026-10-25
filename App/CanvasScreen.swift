@@ -116,7 +116,7 @@ final class CanvasSession {
 
     // Sélection et transformation (voir SelectionUI.swift)
     @ObservationIgnored var selection: SelectionMask?
-    private(set) var hasSelection = false
+    var hasSelection = false
     var selectionKind: SelectionKind = .rectangle
     var selectionCombine: SelectionCombine = .replace
     var selectionThreshold = 0.1
