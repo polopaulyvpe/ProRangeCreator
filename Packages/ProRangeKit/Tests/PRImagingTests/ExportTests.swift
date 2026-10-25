@@ -104,7 +104,8 @@ final class ExportTests: XCTestCase {
             for i in reference.indices {
                 let ref = SIMD3<Float>(reference[i].x, reference[i].y, reference[i].z)
                 let peak = max(ref.x, ref.y, ref.z)
-                let error = abs(image.pixels[i] - ref).max()
+                let diff: SIMD3<Float> = image.pixels[i] - ref
+                let error = max(abs(diff.x), abs(diff.y), abs(diff.z))
                 XCTAssertLessThanOrEqual(error, peak / 128 + 1e-6, "pixel \(i) : \(image.pixels[i]) ≠ \(ref)")
                 if error > peak / 128 + 1e-6 { break }
             }
