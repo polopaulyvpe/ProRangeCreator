@@ -6,25 +6,13 @@ public final class EquirectCanvas {
     public let width: Int
     public let height: Int
     public var pixels: [SIMD4<Float>]
-
-    private let rowSin: [Double]
-    private let rowCos: [Double]
-    private let colSin: [Double]
-    private let colCos: [Double]
+    public let geometry: EquirectGeometry
 
     public init(width: Int, height: Int, fill: SIMD4<Float> = .zero) {
-        precondition(width == 2 * height, "ratio 2:1 obligatoire")
         self.width = width
         self.height = height
+        geometry = EquirectGeometry(width: width, height: height)
         pixels = Array(repeating: fill, count: width * height)
-        let rowStep: Double = .pi / Double(height)
-        let columnStep: Double = 2 * .pi / Double(width)
-        let thetas: [Double] = (0..<height).map { y in (Double(y) + 0.5) * rowStep }
-        let phis: [Double] = (0..<width).map { x in (Double(x) + 0.5) * columnStep - .pi }
-        rowSin = thetas.map(sin)
-        rowCos = thetas.map(cos)
-        colSin = phis.map(sin)
-        colCos = phis.map(cos)
     }
 
     public subscript(x: Int, y: Int) -> SIMD4<Float> {
@@ -33,19 +21,13 @@ public final class EquirectCanvas {
     }
 
     /// Identique à `Equirect.direction(x:y:width:height:)`, avec sinus/cosinus précalculés.
-    public func direction(x: Int, y: Int) -> Vec3 {
-        [rowSin[y] * colSin[x], rowCos[y], -rowSin[y] * colCos[x]]
-    }
+    public func direction(x: Int, y: Int) -> Vec3 { geometry.direction(x: x, y: y) }
 
     /// Angle solide (stéradians) d'un texel de la rangée `y`.
-    public func texelSolidAngle(row y: Int) -> Double {
-        let t0 = Double(y) / Double(height) * .pi
-        let t1 = Double(y + 1) / Double(height) * .pi
-        return 2 * .pi / Double(width) * (cos(t0) - cos(t1))
-    }
+    public func texelSolidAngle(row y: Int) -> Double { geometry.texelSolidAngle(row: y) }
 
     /// Pas angulaire d'une rangée de texels.
-    public var pixelAngle: Double { .pi / Double(height) }
+    public var pixelAngle: Double { geometry.pixelAngle }
 
     public func clear(to value: SIMD4<Float>) {
         for i in pixels.indices { pixels[i] = value }
@@ -100,24 +82,18 @@ public enum SphericalRasterizer {
     /// `bruteForce` parcourt toute la toile (pour tester `EquirectSpan`). Renvoie les rangées modifiées.
     @discardableResult
     public static func stamp(_ dab: SphericalDab, on canvas: EquirectCanvas, bruteForce: Bool = false) -> ClosedRange<Int>? {
-        let frame = TangentFrame(center: dab.center)
-        let pixelAngle = canvas.pixelAngle
-        let reach = dab.radius + pixelAngle
-        let cosReach = cos(reach)
+        let evaluator = DabEvaluator(dab, pixelAngle: canvas.pixelAngle)
         let span = bruteForce
             ? EquirectSpan(rows: 0...(canvas.height - 1), columns: [0...(canvas.width - 1)])
-            : EquirectSpan(center: frame.center, radius: reach, width: canvas.width, height: canvas.height)
+            : evaluator.span(in: canvas.geometry)
 
         var touched: ClosedRange<Int>?
         for y in span.rows {
             for range in span.columns {
                 for x in range {
-                    let d = canvas.direction(x: x, y: y)
-                    if simd_dot(d, frame.center) < cosReach { continue }
-                    let distance = simd_length(frame.project(d))
-                    let a = coverage(distance: distance, radius: dab.radius, hardness: dab.hardness, pixelSize: pixelAngle)
+                    let a = evaluator.coverage(at: canvas.direction(x: x, y: y))
                     if a <= 0 { continue }
-                    blend(dab.color, coverage: Float(a), into: &canvas.pixels[y * canvas.width + x])
+                    blend(dab.color, coverage: a, into: &canvas.pixels[y * canvas.width + x])
                     touched = touched.map { min($0.lowerBound, y)...max($0.upperBound, y) } ?? y...y
                 }
             }
@@ -151,7 +127,7 @@ public enum SphericalRasterizer {
 
     /// Source-over prémultiplié.
     @inline(__always)
-    static func blend(_ color: SIMD4<Float>, coverage: Float, into dst: inout SIMD4<Float>) {
+    public static func blend(_ color: SIMD4<Float>, coverage: Float, into dst: inout SIMD4<Float>) {
         let a = coverage * color.w
         let src = SIMD4<Float>(color.x * a, color.y * a, color.z * a, a)
         dst = src + dst * (1 - a)

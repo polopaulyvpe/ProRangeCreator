@@ -1,9 +1,10 @@
 import Foundation
+import PRCore
 
-/// Journal d'opérations binaire append-only pour undo/redo et replay.
+/// Journal binaire des opérations (traits, gommes…), pour le timelapse et la relecture. L'annulation passe par `UndoRedoManager` (deltas de tuiles).
 /// Format : [Magic(4)][Version(1)][Reserved(3)] [Op1][Op2]...
 /// Chaque opération : [Tag(1)][Length(4)][Payload...]
-public final class OperationJournal: Sendable {
+public final class OperationJournal {
     public let url: URL
     public private(set) var currentIndex: Int = 0
 
@@ -21,13 +22,13 @@ public final class OperationJournal: Sendable {
         self.decoder.dateDecodingStrategy = .iso8601
 
         if FileManager.default.fileExists(atPath: url.path) {
-            self.fileHandle = try FileHandle(forWritingTo: url)
+            self.fileHandle = try FileHandle(forUpdating: url)
             try fileHandle.seekToEnd()
             // Lire l'index actuel (nombre d'opérations)
             currentIndex = try countOperations()
         } else {
             FileManager.default.createFile(atPath: url.path, contents: nil)
-            self.fileHandle = try FileHandle(forWritingTo: url)
+            self.fileHandle = try FileHandle(forUpdating: url)
             // Écrire l'en-tête
             var header = Self.magic
             header.append(Self.version)
@@ -114,7 +115,7 @@ public final class OperationJournal: Sendable {
     ) throws {
         let op = TransformOp(
             matrix: matrix,
-            affectedTiles: affectedTiles?.map { [$0.level, $0.x, $0.y] } ?? []
+            affectedTiles: affectedTiles
         )
         try writeOperation(tag: 0x04, payload: try encoder.encode(op))
     }
@@ -126,6 +127,7 @@ public final class OperationJournal: Sendable {
     }
 
     private func writeOperation(tag: UInt8, payload: Data) throws {
+        try fileHandle.seekToEnd()
         var buffer = Data()
         buffer.append(tag)
         let length = UInt32(payload.count)
@@ -139,7 +141,7 @@ public final class OperationJournal: Sendable {
 
     /// Rejoue toutes les opérations depuis le début (ou depuis `fromIndex`) en appelant `handler` pour chacune.
     /// Retourne le nombre d'opérations rejouées.
-    public func replay(fromIndex: Int = 0, handler: (Operation) throws -> Void) throws -> Int {
+    public func replay(fromIndex: Int = 0, handler: (Operation) async throws -> Void) async throws -> Int {
         try fileHandle.seek(toOffset: headerSize)
         var index = 0
         var replayed = 0
@@ -159,7 +161,7 @@ public final class OperationJournal: Sendable {
 
             if index >= fromIndex {
                 let op = try decodeOperation(tag: tagByte, payload: payload)
-                try handler(op)
+                try await handler(op)
                 replayed += 1
             }
             index += 1
@@ -377,10 +379,10 @@ public struct FillOp: Codable, Sendable {
 /// Transformation (rotation globale 3x3 pour l'instant).
 public struct TransformOp: Codable, Sendable {
     public let matrix: [[Double]] // 3x3 row-major
-    public let affectedTiles: [[Int]] // [ [level, x, y], ... ]
+    public let affectedTiles: [TileCoord]? // Tuiles potentiellement affectées
 
     public var tileCoords: [TileCoord] {
-        affectedTiles.map { TileCoord(level: $0[0], x: $0[1], y: $0[2]) }
+        affectedTiles ?? []
     }
 }
 

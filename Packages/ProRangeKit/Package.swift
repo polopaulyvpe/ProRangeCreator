@@ -24,5 +24,6 @@ let package = Package(
         .target(name: "PRUI", dependencies: ["PRCore", "PREngine"]),
 
         .testTarget(name: "PRCoreTests", dependencies: ["PRCore"]),
+        .testTarget(name: "PRStorageTests", dependencies: ["PRCore", "PRStorage"]),
     ]
 )
