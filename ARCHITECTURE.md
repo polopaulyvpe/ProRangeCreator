@@ -238,3 +238,35 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
   - Changer l'opacité ou le mode du calque actif ne change qu'un uniforme ; changer de calque reconstruit les caches.
 - **Chemin CPU** sinon (mode non Normal au-dessus, masque, écrêtage, groupe, peinture du masque, toile > 8K) : le pinceau CPU peint, et les tuiles touchées sont recomposées entièrement à chaque image dans la texture *dessous*. C'est exact, mais plus lent sur les gros traits.
 - Mémoire GPU à 8K : trois textures RGBA16F avec mipmaps, soit environ 1,1 Go.
+
+## Outils sphériques (phase 5)
+
+Méthode validée au point de contrôle :
+1. **Déformations** (rotation de la sphère, et plus tard transformation et liquify) par **mapping inverse** : chaque texel calcule sa direction, la ramène dans la source et y lit la valeur bilinéaire (longitude bouclée, latitude bornée). Chaque application coûte un rééchantillonnage.
+2. **Outils locaux** (doigt, clonage) dans l'empreinte sphérique du dab, comme le pinceau.
+3. **Propagation** (remplissage, sélection automatique) sur la grille, avec la couture et les pôles connectés.
+4. **Formes** (symétries, dégradés, plus tard sélections et QuickShape) définies sur la sphère : plans miroirs, grands cercles, calottes.
+
+### Lot A (fait)
+
+- **Symétrie** (`SymmetrySettings`) : miroir gauche/droite (plan vertical contenant l'axe de la vue au moment de l'activation), miroir haut/bas (horizon), quadrants, radiale à n copies autour de la verticale, kaléidoscope. Chaque dab est dupliqué, pour le pinceau, la gomme et le doigt.
+- **Guides** (shader) : grille de latitudes et longitudes tous les 10, 15, 30 ou 45°, horizon renforcé, lignes antialiasées d'un pixel quel que soit le zoom. Ils sont liés au repère du monde et ne tournent pas avec l'aperçu de rotation.
+- **Rotation de la sphère** :
+  - aperçu immédiat : le shader tourne la lecture (`contentRot`), pas les pixels ;
+  - « Appliquer » fait tourner tous les calques et masques avec `WarpEngine` (kernel GPU, testé contre `TiledLayer.rotateContent`), en une seule entrée d'historique (`HistoryEntry.otherLayers`).
+- **Remplissage** (`floodFill`) :
+  - par segments horizontaux, sur la couleur encodée et l'alpha du calque cible, avec un seuil ;
+  - bouclage sur la couture, passage par le pôle (même rangée, longitude opposée) ;
+  - composé en Normal avec l'opacité du pinceau.
+- **Dégradé** (`SphericalGradient`) : linéaire le long du grand cercle de A vers B, ou radial (angle depuis A). Il va de la couleur courante au transparent, et il est calculé en parallèle par rangée de tuiles.
+- **Doigt** (`smudge`) : chaque texel du dab reçoit la couleur lue au point correspondant du dab précédent (rotation qui amène le centre précédent sur le centre courant), mélangée selon la force.
+- **Clonage** (`clone`) :
+  - une première touche définit la source ;
+  - le trait recopie à travers la rotation qui amène son point de départ sur la source ;
+  - la lecture se fait dans un instantané pris au début du trait.
+- Le doigt et le clonage passent par le **chemin CPU** (`StackCanvas.forceCPU`, puis `edit`), car ils lisent les pixels pendant le trait.
+
+### Lots suivants
+
+- **B** : sélections (rectangle et ellipse sur l'écran projetés sur la sphère, main levée en polygone sphérique, automatique par propagation), ajout, retrait, inversion, adoucissement, puis transformation de la sélection (libre, uniforme) par mapping inverse.
+- **C** : liquify (champ de déplacement tangent), QuickShape (grands cercles, petits cercles, ellipses sphériques), texte (rendu Core Text posé en patch rectiligne), déformation.

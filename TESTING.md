@@ -21,6 +21,7 @@ gh run view --log-failed
 | `MemoryBudgetTests` | Tailles des calques pleins (2K à 16K) ; calques garantis pour 5 Gio disponibles |
 
 | `BlendModeTests` | Valeurs connues des modes séparables ; comportement > 1 (bornés / non bornés) ; règles de luminosité des modes non séparables ; codes identiques au shader ; composition (Procreate, transparent, opacité nulle) ; Normal = pinceau ; verrou alpha |
+| `SphereToolsTests` | Symétries (nombre de copies, reflets, latitude conservée en radiale, axe qui suit la vue) ; paramètre des dégradés linéaire et radial ; rotation minimale entre deux directions |
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
@@ -29,6 +30,7 @@ gh run view --log-failed
 | Suite | Vérifie |
 |---|---|
 | `PanoramaRendererTests` | Compilation du shader ; vue dépliée identique à la texture au pixel près ; vue sphère conforme aux directions CPU, couture comprise (moins de 2 % d'écarts d'un texel aux frontières) ; valeurs affichées dans [0, 1] pour les quatre courbes à +6 EV |
+| `WarpAndGuidesTests` | Rotation GPU contre référence CPU, puis annulation exacte ; guides (horizon tracé, rien entre les lignes) ; aperçu de rotation dans le shader |
 | `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
 | `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) |
 | `StackCanvasTests` | **Shader contre compositeur CPU pour les 26 modes × 2 espaces** (chemin GPU) ; chemin CPU (Produit au-dessus, masque) ; peinture du masque ; trait GPU annulé sans trace, validé identique au calque CPU, annulé par l'historique ; verrou alpha GPU = CPU |
@@ -45,6 +47,7 @@ gh run view --log-failed
 |---|---|
 | `TiledLayerTests` | Calque 16K vierge sans aucune tuile ; dab identique à la toile de référence (arrondi en demi-flottants) ; petit dab limité aux tuiles voisines ; dab au pôle (toute la rangée) et sur la couture ; remplissage uniforme et vidage ; recompression sans perte ; calque RGBA8 |
 | `LayerStackTests` | Ajouter, déplacer, grouper, dégrouper, supprimer (dernier calque protégé) ; plafond de 50 et duplication indépendante ; annulation de structure ; modes et visibilité dans le composite ; écrêtage, masque, isolation des groupes ; fusion et aplatissement fidèles et annulables ; projet v2 aller-retour et lecture d'un v1 |
+| `SpatialToolTests` | Remplissage dans un anneau, à travers la couture et le pôle, seuil ; dégradé radial ; clonage par rotation ; doigt qui traîne la couleur ; rotation CPU ; entrée d'historique multi-calques |
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
 | `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |
