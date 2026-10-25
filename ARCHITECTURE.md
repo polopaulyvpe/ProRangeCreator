@@ -192,3 +192,49 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
 
 - `Documents/Projets/<nom>.prrange` (format `ProjectPackage`) et `Documents/Exports/`. Les deux sont visibles dans l'app Fichiers (`UIFileSharingEnabled`), et l'export propose aussi la feuille de partage.
 - Ouvrir un projet remplace le calque, recrée sa texture GPU et vide l'historique. L'historique ne survit pas à la fermeture : c'est voulu pour le MVP.
+
+## Calques (phase 4)
+
+### Modes et composition (PRCore)
+
+- **`BlendMode`** : les 26 modes, avec les formules séparables et non séparables (Lum, ClipColor, SetSat) du W3C Compositing Level 1. Les codes du shader suivent l'ordre de `allCases`, et un test vérifie qu'ils correspondent.
+- **Valeurs > 1** :
+  - modes **non bornés** (Normal, Produit, Obscurcir, Éclaircir, Densité linéaire +, Ajout, Soustraction, Division, Différence, Couleur plus foncée et plus claire) : les valeurs passent telles quelles. Le résultat est seulement borné à 0 et au-dessus, et la Division est plafonnée à 65 504 ;
+  - modes **bornés** (tous les autres) : les deux couleurs sont écrêtées à [0, 1] avant le calcul.
+- **`Compositing.composite`** : on calcule `Cs' = (1 − αb)·s + αb·B(b, s)`, puis un source-over prémultiplié, dans l'espace de fusion (D4). Le Normal perceptuel est identique au pinceau (testé).
+
+### Pile (`LayerStack`, PRStorage)
+
+- C'est une liste plate de `StackItem`, de bas en haut. Les enfants d'un groupe sont **juste sous lui**, contigus. Un `StackItem` est une valeur qui référence les `TiledLayer` : une copie de la liste fait donc un instantané de structure peu coûteux.
+- Chaque élément a : opacité, visibilité, mode, **verrou alpha** (pour le pinceau), **écrêtage**, **masque** (un `TiledLayer`, canal rouge : blanc visible, noir caché ; créé blanc uniforme, donc presque gratuit) et groupe parent.
+- Opérations :
+  - ajouter au-dessus de l'élément actif, dupliquer, supprimer (un groupe emporte ses enfants, le dernier calque est refusé) ;
+  - monter et descendre parmi les frères, avec les enfants ;
+  - grouper avec l'élément de dessous, dégrouper, ajouter ou supprimer un masque ;
+  - **fusionner vers le bas** (bake du mode, de l'opacité, du masque et de l'écrêtage dans le calque du dessous) et **aplatir**.
+- **Plafond de 50 calques.** Le nombre **garanti** vient de `MemoryBudget` avec `os_proc_available_memory`, et le panneau le compare au nombre de calques.
+
+### Historique de structure
+
+- `HistoryEntry` porte des deltas de tuiles (un calque) **et/ou** un couple de structures (avant, après). La cible est `HistoryTarget`, c'est-à-dire la pile.
+- Annuler restaure les pixels puis la structure ; rétablir fait l'inverse. Ainsi, une fusion annulée restaure le calque du dessous **et** fait réapparaître celui du dessus.
+- Les changements de propriétés (mode, visibilité, verrou, écrêtage) sont des entrées de structure. Un glissé du curseur d'opacité donne **une seule** entrée.
+
+### Compositeur CPU (`LayerCompositor`)
+
+- Il compose une tuile à la fois. Pour chaque élément :
+  - un groupe est composé à part, sur transparent, puis fondu avec son mode : pas de mode « transfert » pour l'instant ;
+  - le masque multiplie l'alpha de la source ;
+  - un élément écrêté est multiplié par l'alpha de la dernière base non écrêtée (masque compris, opacité non comprise) ; si la base est masquée, il l'est aussi.
+- Une tuile vide d'un calque est sautée, ce qui garde le coût proportionnel à ce qui est peint.
+- Ce compositeur sert à l'export, aux caches d'affichage, à la fusion, à la pipette et de référence pour tester le GPU.
+
+### Affichage et peinture (`StackCanvas`, PREngine)
+
+- **Chemin GPU** quand c'est exact : le calque actif est à la racine, sans masque ni écrêtage, et tout ce qui est visible au-dessus est en Normal.
+  - Trois textures : *dessous* (papier + racine sous l'actif, composé CPU), *actif* (peint par le kernel du pinceau, verrou alpha compris) et *dessus* (composé sur transparent).
+  - Le shader calcule `dessus ⊕Normal (actif ⊕mode,opacité dessous)`. C'est exact parce que le Normal est associatif dans notre représentation : chaque étape ré-encode la couleur droite.
+  - Testé contre le compositeur CPU pour les **26 modes** et les deux espaces.
+  - Changer l'opacité ou le mode du calque actif ne change qu'un uniforme ; changer de calque reconstruit les caches.
+- **Chemin CPU** sinon (mode non Normal au-dessus, masque, écrêtage, groupe, peinture du masque, toile > 8K) : le pinceau CPU peint, et les tuiles touchées sont recomposées entièrement à chaque image dans la texture *dessous*. C'est exact, mais plus lent sur les gros traits.
+- Mémoire GPU à 8K : trois textures RGBA16F avec mipmaps, soit environ 1,1 Go.

@@ -8,7 +8,7 @@
 | 2 | Visualisation : sphère, dépliage, fenêtre plane, LOD, tone mapping (D5, D12) | 🟡 code et tests poussés ; reste à valider sur l'iPad (fluidité, gestes). Limite : affichage plafonné à 8K, pas encore de texture virtuelle pour le détail 16K. EDR non applicable (écran SDR) |
 | 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | 🟡 code et 56 tests verts (GPU contre CPU sur le runner) ; reste à mesurer sur l’iPad la latence du trait (cible ≤ 16 ms) et à valider la sensation ; pas encore de prédiction des touches |
 | — | **MVP** = phases 0 à 3 + export EXR/HDR simple | 🟡 code complet, 66 tests verts (relecture ImageIO comprise) ; reste la validation sur l’iPad (installation bloquée côté Apple) |
-| 4 | Calques, modes de fusion, masques, budget mémoire | ⏳ |
+| 4 | Calques, modes de fusion, masques, budget mémoire | 🟡 pile 50 calques, 26 modes, masques, groupes, écrêtage, verrou alpha, fusion, aplatissement, projet v2 ; shader contre CPU testé pour les 26 modes ; reste la validation sur l’iPad (fluidité du chemin CPU, mémoire des 3 textures) |
 | 5 | Outils sphériques | ⏳ |
 | 6 | Ajustements et filtres | ⏳ |
 | 7 | Import/export complet, import de pinceaux (D9, D10) | ⏳ |

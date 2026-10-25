@@ -20,6 +20,7 @@ gh run view --log-failed
 | `SphericalBrushTests` | Empreinte bornée = parcours complet ; aire = calotte à 1,5 % près ; rondeur dans 16 secteurs à un texel près ; dureté |
 | `MemoryBudgetTests` | Tailles des calques pleins (2K à 16K) ; calques garantis pour 5 Gio disponibles |
 
+| `BlendModeTests` | Valeurs connues des modes séparables ; comportement > 1 (bornés / non bornés) ; règles de luminosité des modes non séparables ; codes identiques au shader ; composition (Procreate, transparent, opacité nulle) ; Normal = pinceau ; verrou alpha |
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
@@ -29,7 +30,8 @@ gh run view --log-failed
 |---|---|
 | `PanoramaRendererTests` | Compilation du shader ; vue dépliée identique à la texture au pixel près ; vue sphère conforme aux directions CPU, couture comprise (moins de 2 % d'écarts d'un texel aux frontières) ; valeurs affichées dans [0, 1] pour les quatre courbes à +6 EV |
 | `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
-| `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) ; trait annulé sans trace ; trait validé identique entre GPU et calque CPU, puis annulé par l'historique ; repli CPU |
+| `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) |
+| `StackCanvasTests` | **Shader contre compositeur CPU pour les 26 modes × 2 espaces** (chemin GPU) ; chemin CPU (Produit au-dessus, masque) ; peinture du masque ; trait GPU annulé sans trace, validé identique au calque CPU, annulé par l'historique ; verrou alpha GPU = CPU |
 
 ## Suites actuelles (PRImaging)
 
@@ -42,6 +44,7 @@ gh run view --log-failed
 | Suite | Vérifie |
 |---|---|
 | `TiledLayerTests` | Calque 16K vierge sans aucune tuile ; dab identique à la toile de référence (arrondi en demi-flottants) ; petit dab limité aux tuiles voisines ; dab au pôle (toute la rangée) et sur la couture ; remplissage uniforme et vidage ; recompression sans perte ; calque RGBA8 |
+| `LayerStackTests` | Ajouter, déplacer, grouper, dégrouper, supprimer (dernier calque protégé) ; plafond de 50 et duplication indépendante ; annulation de structure ; modes et visibilité dans le composite ; écrêtage, masque, isolation des groupes ; fusion et aplatissement fidèles et annulables ; projet v2 aller-retour et lecture d'un v1 |
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
 | `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |
