@@ -97,6 +97,36 @@ Projet.prrange/
 
 Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme, remplissage, transformation, marqueur). Il sert au timelapse et à l'inspection, pas à l'annulation.
 
-## Pipeline de rendu
+## Vues et rendu (phase 2)
 
-À définir en phase 2.
+### Vues (`ViewState`, PRCore)
+
+- **Sphère** :
+  - caméra au centre ; `yaw` vaut 0 vers -Z et grandit vers +X ; `pitch` est positif vers le haut, borné à ±89,9° ; `roll` n'agit que si l'horizon est déverrouillé ;
+  - le champ de vision est vertical, de 20° à 150° ;
+  - rotation caméra → monde : `Ry(-yaw) · Rx(pitch) · Rz(roll)`.
+- **Dépliée** :
+  - `unfoldedCenter` est l'uv équirectangulaire au centre de l'écran ; `unfoldedSpan` est la hauteur visible en v (1 = tout le panorama) ;
+  - comme le panorama est 2:1, une unité de u occupe deux fois plus de pixels qu'une unité de v ;
+  - le centre boucle sur la couture.
+- **Fenêtre plane** : vue rectiligne verrouillée sur une des six faces (`CubeFace`), avec zoom et décalage du point principal (`flatShift`).
+- **Dépliage** :
+  - le morphing mélange les deux projections inverses : `normalize(mix(direction rectiligne, direction dépliée, t))`, avec t animé de 0 à 1 en 0,6 s (courbe smoothstep) ;
+  - `prepareUnfold` centre la vue à plat sur la direction regardée, `prepareFold` fait regarder la caméra le centre de la vue à plat.
+- `ProjectionParameters.direction(ndc:)` sert de référence CPU au shader : mêmes formules, en double précision. Il sert aussi au pinceau pour convertir un point de l'écran en direction.
+
+### Rendu (`PanoramaRenderer`, PREngine)
+
+- Les shaders MSL sont compilés au lancement (`makeLibrary(source:)`). On dessine un seul triangle qui couvre l'écran, et le fragment calcule la direction de chaque pixel.
+- Échantillonnage :
+  - u boucle (`repeat`), v est bloqué aux bords ;
+  - le **niveau de mipmap est calculé explicitement** à partir de la taille angulaire d'un pixel comparée à celle d'un texel. Il n'y a donc pas de saut de dérivées sur la couture.
+- Couleur : on multiplie par 2^exposition, puis on applique la courbe : **écrêtage par défaut (D12)**, ou AgX, ACES (Narkowicz) ou filmique (Hable). L'écran utilise `bgra8Unorm_srgb`, le matériel encode donc le sRGB.
+- La vue Metal tourne à 120 images/s en continu. Le dessin à la demande viendra avec la passe de performance.
+
+### Texture d'affichage et LOD (`DisplayTexture`)
+
+- Le panorama est mis en RGBA16F avec mipmaps, à partir des tuiles du calque, en composite sur le fond blanc. La pile de calques arrive en phase 4.
+- La largeur est plafonnée à 8K (`maxWidth`) : une toile 16K est réduite par moyenne de blocs 2×2. Côté GPU, une toile 8K occupe environ 360 Mo avec ses mipmaps.
+- Seules les tuiles modifiées sont renvoyées au GPU, et les mipmaps sont régénérées une fois par image si besoin.
+- **Limite connue** : à 16K, l'affichage plafonne à 8K. Il manque encore une texture virtuelle par tuiles pour afficher le détail 16K au zoom maximum. C'est prévu avec la passe de performance, et il faudra le mesurer sur l'appareil.

@@ -72,7 +72,8 @@ enum PanoramaShaders {
         float3 v = inset * max(c, 1e-10);
         v = (clamp(log2(v), minEV, maxEV) - minEV) / (maxEV - minEV);
         v = outset * agxContrast(v);
-        return pow(max(v, 0.0), 2.2);
+        // La matrice de sortie peut dépasser légèrement [0, 1] sur les couleurs saturées.
+        return clamp(pow(max(v, 0.0), 2.2), 0.0, 1.0);
     }
 
     static float3 aces(float3 c) {
