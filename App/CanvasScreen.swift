@@ -2,39 +2,61 @@ import MetalKit
 import PRCore
 import PREngine
 import PRStorage
+import simd
 import SwiftUI
 import UIKit
 
-/// État de l'écran Toile : un calque, l'historique, la vue et les réglages d'affichage.
-/// Le pinceau est encore le rasteriseur CPU (le pinceau Metal arrive en phase 3).
+enum PaintTool: String, CaseIterable {
+    case brush
+    case eraser
+
+    var label: String {
+        switch self {
+        case .brush: "Pinceau"
+        case .eraser: "Gomme"
+        }
+    }
+}
+
+/// État de l'écran Toile : un calque, l'historique, la vue, les outils et l'affichage.
 @MainActor
 @Observable
 final class CanvasSession {
     static let canvasWidth = 8192
     static let morphDuration = 0.6
+    static let maxRecentColors = 10
 
     let layer = TiledLayer(name: "Calque 1", width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
     let history = UndoRedoManager()
 
+    /// Créé par le coordinateur Metal (il faut le GPU).
+    @ObservationIgnored var canvas: LayerCanvas?
     /// Lu à chaque image et modifié par les gestes : hors observation pour ne pas redessiner SwiftUI en continu.
     @ObservationIgnored var view = ViewState()
-    @ObservationIgnored var dirtyTiles = Set<TileCoord>()
-    @ObservationIgnored var needsFullUpload = true
 
     private(set) var mode: ViewMode = .sphere
     private(set) var horizonLocked = true
     private(set) var fovDegrees = 90.0
     private(set) var canUndo = false
     private(set) var canRedo = false
+    private(set) var recentColors: [SIMD3<Double>] = []
+    private(set) var blendSpace: BlendSpace = .perceptual
+    var tool: PaintTool = .brush
+    var brush = BrushSettings.defaultBrush
+    var eraser = BrushSettings.defaultEraser
+    /// Couleur courante, composantes encodées sRGB dans [0, 1].
+    var color: SIMD3<Double> = [0.15, 0.35, 0.85]
     var toneMapping: ToneMapping = .clip
     var exposure = 0.0
-    var brushRadiusDegrees = 2.0
-    var hardness = 0.8
-    var colorIndex = 0
+    var showColorPicker = false
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
-    @ObservationIgnored private var stroking = false
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
+
+    var settings: BrushSettings {
+        get { tool == .brush ? brush : eraser }
+        set { if tool == .brush { brush = newValue } else { eraser = newValue } }
+    }
 
     // MARK: - Vues
 
@@ -82,6 +104,11 @@ final class CanvasSession {
         horizonLocked = locked
     }
 
+    func setBlendSpace(_ space: BlendSpace) {
+        blendSpace = space
+        canvas?.blendSpace = space
+    }
+
     /// Avance l'animation de dépliage (appelé à chaque image).
     func advance(now: CFTimeInterval) {
         guard let anim = morphAnimation else { return }
@@ -101,88 +128,118 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
-    private var linearColor: SIMD4<Float> {
-        let c = PaletteColor.all[colorIndex].rgb
-        return [ColorTransfer.toLinear(c.x), ColorTransfer.toLinear(c.y), ColorTransfer.toLinear(c.z), 1]
+    private func dab(at center: Vec3, pressure: Double) -> SphericalDab {
+        let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
+        return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase)
     }
 
-    func strokeBegan(ndc: SIMD2<Double>, aspect: Double) {
-        guard !stroking, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
-        layer.beginOperation()
-        stroking = true
-        stamp(sampler.begin(at: d))
+    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        canvas.beginStroke()
+        if tool == .brush { rememberColor() }
+        canvas.add(sampler.begin(at: d).map { dab(at: $0, pressure: pressure) })
     }
 
-    func strokeMoved(ndc: SIMD2<Double>, aspect: Double) {
-        guard stroking, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
-        stamp(sampler.add(d, spacing: brushRadiusDegrees * .pi / 180 * 0.15))
+    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        guard let canvas, canvas.isStroking, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        let spacing = max(settings.radius(pressure: pressure) * settings.spacing, 1e-4)
+        canvas.add(sampler.add(d, spacing: spacing).map { dab(at: $0, pressure: pressure) })
     }
 
     func strokeEnded() {
-        guard stroking else { return }
-        stroking = false
-        let deltas = layer.endOperation()
-        if !deltas.isEmpty { history.record(HistoryEntry(name: "Trait", layerID: layer.id, deltas: deltas)) }
+        guard let canvas, canvas.isStroking else { return }
+        let deltas = canvas.endStroke()
+        if !deltas.isEmpty {
+            history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: layer.id, deltas: deltas))
+        }
         refreshHistory()
     }
 
-    private func stamp(_ centers: [Vec3]) {
-        let radius = brushRadiusDegrees * .pi / 180
-        for center in centers {
-            let dab = SphericalDab(center: center, radius: radius, hardness: hardness, color: linearColor)
-            dirtyTiles.formUnion(layer.stamp(dab))
-        }
+    /// Second doigt posé ou pipette : le trait commencé disparaît sans laisser de trace.
+    func strokeCancelled() {
+        canvas?.cancelStroke()
     }
 
+    // MARK: - Historique
+
     func undo() {
-        if let entry = try? history.undo(in: [layer]) { markDirty(entry) }
+        strokeCancelled()
+        if let entry = try? history.undo(in: [layer]) { invalidate(entry) }
         refreshHistory()
     }
 
     func redo() {
-        if let entry = try? history.redo(in: [layer]) { markDirty(entry) }
+        strokeCancelled()
+        if let entry = try? history.redo(in: [layer]) { invalidate(entry) }
         refreshHistory()
     }
 
-    private func markDirty(_ entry: HistoryEntry) {
-        if entry.isSpilled { needsFullUpload = true } else { dirtyTiles.formUnion(entry.deltas.map(\.coord)) }
+    private func invalidate(_ entry: HistoryEntry) {
+        if entry.isSpilled { canvas?.invalidateAll() } else { canvas?.invalidate(entry.deltas.map(\.coord)) }
     }
 
     private func refreshHistory() {
         canUndo = history.canUndo
         canRedo = history.canRedo
     }
+
+    // MARK: - Couleur
+
+    /// Pipette : couleur affichée sous le doigt (calque composé sur le papier blanc).
+    func pickColor(ndc: SIMD2<Double>, aspect: Double) {
+        guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        let p = Equirect.pixel(from: d, width: layer.width, height: layer.height)
+        let x = min(layer.width - 1, max(0, Int(p.x)))
+        let y = min(layer.height - 1, max(0, Int(p.y)))
+        let px = layer.pixel(x: x, y: y)
+        let over = SIMD3<Float>(px.x, px.y, px.z) + SIMD3<Float>(repeating: 1 - px.w)
+        let encoded = ColorTransfer.toEncoded(over)
+        color = [Double(min(1, max(0, encoded.x))), Double(min(1, max(0, encoded.y))), Double(min(1, max(0, encoded.z)))]
+        tool = .brush
+    }
+
+    private func rememberColor() {
+        recentColors.removeAll { simd_length($0 - color) < 1e-4 }
+        recentColors.insert(color, at: 0)
+        if recentColors.count > Self.maxRecentColors { recentColors.removeLast() }
+    }
 }
 
 // MARK: - Vue Metal
 
-/// Reçoit les touches : un doigt ou le Pencil peint, deux doigts naviguent (gestionnaires de gestes du coordinateur).
+/// Reçoit les touches : un doigt ou le Pencil peint ; un second doigt annule le trait commencé.
 final class CanvasMTKView: MTKView {
     weak var coordinator: CanvasCoordinator?
 
     private var aspect: Double { Double(bounds.width / max(bounds.height, 1)) }
 
-    private func ndc(_ p: CGPoint) -> SIMD2<Double> {
+    func ndc(_ p: CGPoint) -> SIMD2<Double> {
         [Double(p.x / bounds.width) * 2 - 1, 1 - Double(p.y / bounds.height) * 2]
+    }
+
+    /// Pression normalisée du Pencil ; le doigt n'en a pas (1).
+    private func pressure(_ touch: UITouch) -> Double {
+        guard touch.type == .pencil, touch.maximumPossibleForce > 0 else { return 1 }
+        return Double(touch.force / touch.maximumPossibleForce)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let session = coordinator?.session else { return }
         guard let touch = touches.first, (event?.allTouches?.count ?? 1) == 1 else {
-            session.strokeEnded()
+            session.strokeCancelled()
             return
         }
-        session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect)
+        session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect, pressure: pressure(touch))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let session = coordinator?.session, let touch = touches.first else { return }
         if (event?.allTouches?.count ?? 1) > 1 {
-            session.strokeEnded()
+            session.strokeCancelled()
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
-            session.strokeMoved(ndc: ndc(t.location(in: self)), aspect: aspect)
+            session.strokeMoved(ndc: ndc(t.location(in: self)), aspect: aspect, pressure: pressure(t))
         }
     }
 
@@ -191,7 +248,7 @@ final class CanvasMTKView: MTKView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        coordinator?.session.strokeEnded()
+        coordinator?.session.strokeCancelled()
     }
 }
 
@@ -201,7 +258,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     let device: (any MTLDevice)?
     private let queue: (any MTLCommandQueue)?
     private let renderer: PanoramaRenderer?
-    private let display: DisplayTexture?
+    private var rapidUndoTimer: Timer?
 
     init(session: CanvasSession) {
         self.session = session
@@ -209,24 +266,19 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         self.device = device
         queue = device?.makeCommandQueue()
         renderer = device.flatMap { try? PanoramaRenderer(device: $0) }
-        display = device.flatMap { try? DisplayTexture(device: $0, layerWidth: session.layer.width) }
+        if session.canvas == nil {
+            let canvas = LayerCanvas(layer: session.layer, device: device)
+            canvas.blendSpace = session.blendSpace
+            session.canvas = canvas
+        }
     }
 
     func render(in view: MTKView) {
         session.advance(now: CACurrentMediaTime())
-        guard let renderer, let display, let queue,
+        guard let renderer, let queue, let canvas = session.canvas, let display = canvas.display,
               let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let commands = queue.makeCommandBuffer() else { return }
-
-        if session.needsFullUpload {
-            display.uploadAll(session.layer)
-            session.needsFullUpload = false
-            session.dirtyTiles.removeAll()
-        } else if !session.dirtyTiles.isEmpty {
-            display.upload(session.layer, tiles: session.dirtyTiles)
-            session.dirtyTiles.removeAll()
-        }
-        display.finishUpdates(commands)
+        canvas.encodeFrame(into: commands)
 
         let size = view.drawableSize
         let parameters = session.view.parameters(aspect: Double(size.width / max(size.height, 1)))
@@ -238,6 +290,8 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         commands.present(drawable)
         commands.commit()
     }
+
+    // MARK: - Navigation
 
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         session.view.zoom(by: Double(gesture.scale))
@@ -257,6 +311,41 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     @objc func handleRotation(_ gesture: UIRotationGestureRecognizer) {
         session.view.rotate(by: Double(gesture.rotation))
         gesture.rotation = 0
+    }
+
+    // MARK: - Historique (D6)
+
+    @objc func handleUndoTap(_ gesture: UITapGestureRecognizer) {
+        session.undo()
+    }
+
+    @objc func handleRedoTap(_ gesture: UITapGestureRecognizer) {
+        session.redo()
+    }
+
+    /// Maintien à deux doigts : annulation rapide continue.
+    @objc func handleUndoHold(_ gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            session.undo()
+            rapidUndoTimer?.invalidate()
+            rapidUndoTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.session.undo() }
+            }
+        case .ended, .cancelled, .failed:
+            rapidUndoTimer?.invalidate()
+            rapidUndoTimer = nil
+        default:
+            break
+        }
+    }
+
+    // MARK: - Pipette
+
+    @objc func handleEyedropper(_ gesture: UILongPressGestureRecognizer) {
+        guard let view = gesture.view as? CanvasMTKView, gesture.state == .began || gesture.state == .changed else { return }
+        session.strokeCancelled()
+        session.pickColor(ndc: view.ndc(gesture.location(in: view)), aspect: Double(view.bounds.width / max(view.bounds.height, 1)))
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -294,7 +383,21 @@ struct MetalCanvas: UIViewRepresentable {
         pan.minimumNumberOfTouches = 2
         pan.maximumNumberOfTouches = 2
         let rotation = UIRotationGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleRotation(_:)))
-        for gesture in [pinch, pan, rotation] as [UIGestureRecognizer] {
+
+        let undoTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleUndoTap(_:)))
+        undoTap.numberOfTouchesRequired = 2
+        undoTap.numberOfTapsRequired = 2
+        let redoTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleRedoTap(_:)))
+        redoTap.numberOfTouchesRequired = 3
+        redoTap.numberOfTapsRequired = 2
+        let undoHold = UILongPressGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleUndoHold(_:)))
+        undoHold.numberOfTouchesRequired = 2
+        undoHold.minimumPressDuration = 0.6
+        let eyedropper = UILongPressGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleEyedropper(_:)))
+        eyedropper.numberOfTouchesRequired = 1
+        eyedropper.minimumPressDuration = 0.5
+
+        for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper] as [UIGestureRecognizer] {
             gesture.delegate = coordinator
             view.addGestureRecognizer(gesture)
         }
@@ -310,11 +413,62 @@ struct CanvasScreen: View {
     @State private var session = CanvasSession()
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .topLeading) {
             MetalCanvas(session: session)
                 .ignoresSafeArea()
-            CanvasToolbar(session: session)
-                .padding(12)
+            VStack(alignment: .leading, spacing: 12) {
+                CanvasToolbar(session: session)
+                SideControls(session: session)
+            }
+            .padding(12)
+        }
+    }
+}
+
+/// Colonne de gauche, comme dans Procreate : taille et opacité de l'outil, annuler / rétablir.
+struct SideControls: View {
+    @Bindable var session: CanvasSession
+
+    var body: some View {
+        VStack(spacing: 28) {
+            VerticalSlider(value: $session.settings.radiusDegrees, range: 0.3...30, label: "Taille")
+            VerticalSlider(value: $session.settings.opacity, range: 0.02...1, label: "Opacité")
+            VStack(spacing: 14) {
+                Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(!session.canUndo)
+                Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .disabled(!session.canRedo)
+            }
+            .font(.title3)
+        }
+        .padding(.vertical, 22)
+        .padding(.horizontal, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+    }
+}
+
+struct VerticalSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            GeometryReader { geo in
+                let span = range.upperBound - range.lowerBound
+                let fraction = (value - range.lowerBound) / span
+                ZStack(alignment: .bottom) {
+                    Capsule().fill(.quaternary)
+                    Capsule().fill(.tint).frame(height: max(10, geo.size.height * fraction))
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                    let f = 1 - min(max(drag.location.y / geo.size.height, 0), 1)
+                    value = range.lowerBound + f * span
+                })
+            }
+            .frame(width: 26, height: 170)
         }
     }
 }
@@ -354,29 +508,38 @@ struct CanvasToolbar: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
-
-                Spacer()
-
-                Button("Annuler", systemImage: "arrow.uturn.backward") { session.undo() }
-                    .disabled(!session.canUndo)
-                Button("Rétablir", systemImage: "arrow.uturn.forward") { session.redo() }
-                    .disabled(!session.canRedo)
             }
 
-            HStack(spacing: 18) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Taille \(session.brushRadiusDegrees, format: .number.precision(.fractionLength(1)))°")
-                    Slider(value: $session.brushRadiusDegrees, in: 0.3...30)
-                }
-                .frame(width: 180)
-
-                Picker("Couleur", selection: $session.colorIndex) {
-                    ForEach(PaletteColor.all.indices, id: \.self) { Text(PaletteColor.all[$0].name).tag($0) }
+            HStack(spacing: 16) {
+                Picker("Outil", selection: $session.tool) {
+                    ForEach(PaintTool.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 260)
+                .frame(width: 180)
 
-                Spacer()
+                Button {
+                    session.showColorPicker = true
+                } label: {
+                    Circle()
+                        .fill(Color(.sRGB, red: session.color.x, green: session.color.y, blue: session.color.z))
+                        .frame(width: 30, height: 30)
+                        .overlay(Circle().stroke(.white.opacity(0.8), lineWidth: 2))
+                }
+                .popover(isPresented: $session.showColorPicker) {
+                    ColorPickerPanel(session: session)
+                        .padding(18)
+                }
+
+                Toggle("Pression → taille", isOn: $session.settings.pressureAffectsSize)
+                    .fixedSize()
+                Toggle("Pression → opacité", isOn: $session.settings.pressureAffectsOpacity)
+                    .fixedSize()
+
+                Menu("Fusion : \(session.blendSpace.label)") {
+                    ForEach(BlendSpace.allCases, id: \.self) { space in
+                        Button(space.label) { session.setBlendSpace(space) }
+                    }
+                }
 
                 Picker("Affichage", selection: $session.toneMapping) {
                     ForEach(ToneMapping.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -387,7 +550,7 @@ struct CanvasToolbar: View {
                     Text("Exposition \(session.exposure, format: .number.precision(.fractionLength(1))) EV")
                     Slider(value: $session.exposure, in: -4...4)
                 }
-                .frame(width: 180)
+                .frame(width: 170)
             }
         }
         .font(.callout)

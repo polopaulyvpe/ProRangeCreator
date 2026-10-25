@@ -16,6 +16,7 @@ enum PanoramaShaders {
         float4 unfolded;    // centre u, centre v, hauteur visible en v, morphing
         float4 display;     // exposition (EV), courbe, hauteur de l'écran en pixels, hauteur de la texture
         float4 background;  // couleur hors panorama
+        float4 paper;       // fond de la toile, sous le calque (blanc)
     };
 
     struct VOut {
@@ -121,6 +122,7 @@ enum PanoramaShaders {
         float texelAngle = PI / u.display.w;
         float lod = max(0.0, log2(pixelAngle / texelAngle));
         float4 c = pano.sample(s, uv, level(lod));
+        c.rgb += u.paper.rgb * (1.0 - c.a);
         return float4(toneMap(c.rgb * exp2(u.display.x), int(u.display.y)), 1.0);
     }
     """

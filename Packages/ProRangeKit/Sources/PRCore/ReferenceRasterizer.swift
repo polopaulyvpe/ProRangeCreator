@@ -57,13 +57,21 @@ public struct SphericalDab: Sendable {
     public var hardness: Double
     /// RGB linéaire non prémultiplié ; `w` = opacité.
     public var color: SIMD4<Float>
+    public var mode: DabMode
 
-    public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>) {
+    public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>, mode: DabMode = .paint) {
         self.center = center
         self.radius = radius
         self.hardness = hardness
         self.color = color
+        self.mode = mode
     }
+}
+
+/// Peindre ou effacer : même moteur, même forme (la gomme n'utilise que l'opacité de `color`).
+public enum DabMode: Sendable {
+    case paint
+    case erase
 }
 
 public enum SphericalRasterizer {
@@ -81,7 +89,8 @@ public enum SphericalRasterizer {
     /// Rend un dab texel par texel : chaque texel est projeté dans le plan tangent au point d'impact.
     /// `bruteForce` parcourt toute la toile (pour tester `EquirectSpan`). Renvoie les rangées modifiées.
     @discardableResult
-    public static func stamp(_ dab: SphericalDab, on canvas: EquirectCanvas, bruteForce: Bool = false) -> ClosedRange<Int>? {
+    public static func stamp(_ dab: SphericalDab, on canvas: EquirectCanvas, space: BlendSpace = .perceptual,
+                             bruteForce: Bool = false) -> ClosedRange<Int>? {
         let evaluator = DabEvaluator(dab, pixelAngle: canvas.pixelAngle)
         let span = bruteForce
             ? EquirectSpan(rows: 0...(canvas.height - 1), columns: [0...(canvas.width - 1)])
@@ -93,7 +102,7 @@ public enum SphericalRasterizer {
                 for x in range {
                     let a = evaluator.coverage(at: canvas.direction(x: x, y: y))
                     if a <= 0 { continue }
-                    blend(dab.color, coverage: a, into: &canvas.pixels[y * canvas.width + x])
+                    apply(dab, coverage: a, to: &canvas.pixels[y * canvas.width + x], space: space)
                     touched = touched.map { min($0.lowerBound, y)...max($0.upperBound, y) } ?? y...y
                 }
             }
@@ -125,7 +134,38 @@ public enum SphericalRasterizer {
         return y0...y1
     }
 
-    /// Source-over prémultiplié.
+    /// Applique un dab à un pixel (RGBA linéaire prémultiplié).
+    @inline(__always)
+    public static func apply(_ dab: SphericalDab, coverage: Float, to dst: inout SIMD4<Float>, space: BlendSpace) {
+        switch dab.mode {
+        case .erase:
+            dst *= 1 - coverage * dab.color.w
+        case .paint:
+            switch space {
+            case .linear: blend(dab.color, coverage: coverage, into: &dst)
+            case .perceptual: blendPerceptual(dab.color, coverage: coverage, into: &dst)
+            }
+        }
+    }
+
+    /// Source-over sur les valeurs encodées (comme Procreate), stockage linéaire prémultiplié.
+    @inline(__always)
+    public static func blendPerceptual(_ color: SIMD4<Float>, coverage: Float, into dst: inout SIMD4<Float>) {
+        let sa = coverage * color.w
+        let da = dst.w
+        let outA = sa + da * (1 - sa)
+        guard outA > 0 else {
+            dst = .zero
+            return
+        }
+        let src = ColorTransfer.toEncoded(SIMD3<Float>(color.x, color.y, color.z))
+        let below = da > 0 ? ColorTransfer.toEncoded(SIMD3<Float>(dst.x, dst.y, dst.z) / da) : SIMD3<Float>.zero
+        let mixed = (src * sa + below * (da * (1 - sa))) / outA
+        let rgb = ColorTransfer.toLinear(mixed) * outA
+        dst = SIMD4<Float>(rgb.x, rgb.y, rgb.z, outA)
+    }
+
+    /// Source-over prémultiplié en lumière linéaire.
     @inline(__always)
     public static func blend(_ color: SIMD4<Float>, coverage: Float, into dst: inout SIMD4<Float>) {
         let a = coverage * color.w

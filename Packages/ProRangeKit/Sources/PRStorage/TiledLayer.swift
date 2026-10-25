@@ -159,7 +159,7 @@ public final class TiledLayer {
 
     /// Peint un dab sphérique. Renvoie les tuiles modifiées.
     @discardableResult
-    public func stamp(_ dab: SphericalDab) -> Set<TileCoord> {
+    public func stamp(_ dab: SphericalDab, space: BlendSpace = .perceptual) -> Set<TileCoord> {
         let evaluator = DabEvaluator(dab, pixelAngle: geometry.pixelAngle)
         let span = evaluator.span(in: geometry)
         let side = TileSize.side
@@ -170,11 +170,19 @@ public final class TiledLayer {
                     let xs = max(columns.lowerBound, tx * side)...min(columns.upperBound, tx * side + side - 1)
                     let ys = max(span.rows.lowerBound, ty * side)...min(span.rows.upperBound, ty * side + side - 1)
                     let coord = TileCoord(x: tx, y: ty)
-                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator) { touched.insert(coord) }
+                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator, space: space) { touched.insert(coord) }
                 }
             }
         }
         return touched
+    }
+
+    /// Remplace une tuile par des pixels bruts du format du calque (résultat d'un trait peint sur le GPU). Enregistré dans l'historique.
+    public func replaceTile(_ coord: TileCoord, with bytes: [UInt8]) {
+        precondition(bytes.count == format.bytesPerTile, "taille de tuile invalide")
+        willModify(coord)
+        setContent(nil, at: coord)
+        putPixels(bytes, at: coord)
     }
 
     /// Remplit tout le calque d'une valeur (RGB linéaire prémultiplié). Zéro vide le calque.
@@ -224,7 +232,8 @@ public final class TiledLayer {
 
     // MARK: - Tuiles
 
-    private func stampTile(_ coord: TileCoord, xs: ClosedRange<Int>, ys: ClosedRange<Int>, evaluator: DabEvaluator) -> Bool {
+    private func stampTile(_ coord: TileCoord, xs: ClosedRange<Int>, ys: ClosedRange<Int>, evaluator: DabEvaluator,
+                           space: BlendSpace) -> Bool {
         // Couverture d'abord : une tuile que le dab ne touche pas n'est ni créée ni enregistrée.
         var coverage = [Float](repeating: 0, count: xs.count * ys.count)
         var any = false
@@ -241,7 +250,7 @@ public final class TiledLayer {
 
         let side = TileSize.side
         let format = format
-        let color = evaluator.dab.color
+        let dab = evaluator.dab
         var pixels = takePixels(coord)
         pixels.withUnsafeMutableBytes { raw in
             let base = raw.baseAddress!
@@ -254,7 +263,7 @@ public final class TiledLayer {
                     if a <= 0 { continue }
                     let index = row + (x - coord.x * side)
                     var p = Self.read(UnsafeRawPointer(base), index, format)
-                    SphericalRasterizer.blend(color, coverage: a, into: &p)
+                    SphericalRasterizer.apply(dab, coverage: a, to: &p, space: space)
                     Self.write(base, index, p, format)
                 }
             }

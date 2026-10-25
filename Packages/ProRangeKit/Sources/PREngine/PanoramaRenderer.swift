@@ -1,7 +1,7 @@
 import Metal
 import PRCore
 
-/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : sept `float4`).
+/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : huit `float4`).
 public struct ViewUniforms {
     public var rot0: SIMD4<Float>
     public var rot1: SIMD4<Float>
@@ -10,9 +10,12 @@ public struct ViewUniforms {
     public var unfolded: SIMD4<Float>
     public var display: SIMD4<Float>
     public var background: SIMD4<Float>
+    public var paper: SIMD4<Float>
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
-                exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09]) {
+                exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
+                paper: SIMD3<Float> = [1, 1, 1]) {
+        self.paper = [paper.x, paper.y, paper.z, 1]
         func column(_ c: SIMD3<Double>) -> SIMD4<Float> { [Float(c.x), Float(c.y), Float(c.z), 0] }
         rot0 = column(p.rotation.columns.0)
         rot1 = column(p.rotation.columns.1)

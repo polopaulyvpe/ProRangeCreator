@@ -95,7 +95,7 @@ final class PanoramaRendererTests: XCTestCase {
 }
 
 final class DisplayTextureTests: XCTestCase {
-    func testUploadCompositesOverBackgroundAndReduces() throws {
+    func testUploadReducesWithoutCompositing() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("pas de GPU Metal sur cette machine") }
         let layer = TiledLayer(name: "t", width: 2048, height: 1024)
         layer.stamp(SphericalDab(center: [0, 0, -1], radius: 0.3, hardness: 1, color: [1, 0, 0, 1]))
@@ -112,6 +112,6 @@ final class DisplayTextureTests: XCTestCase {
             return px
         }
         XCTAssertEqual(texel(512, 256), [1, 0, 0, 1], "centre du dab, face à -Z")
-        XCTAssertEqual(texel(10, 10), [1, 1, 1, 1], "fond blanc ailleurs")
+        XCTAssertEqual(texel(10, 10), [0, 0, 0, 0], "transparent ailleurs : le papier est composé par le shader")
     }
 }
