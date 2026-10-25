@@ -22,17 +22,28 @@ public struct HistoryEntry {
     public internal(set) var deltas: [TileDelta]
     public internal(set) var spillURL: URL?
     public let structure: (before: [StackItem], after: [StackItem])?
+    /// Deltas d'autres calques modifiés par la même opération (rotation de la sphère…). Jamais déversés.
+    public let otherLayers: [(layerID: UUID, deltas: [TileDelta])]
 
-    public init(name: String, layerID: UUID, deltas: [TileDelta], structure: (before: [StackItem], after: [StackItem])? = nil) {
+    public init(name: String, layerID: UUID, deltas: [TileDelta], structure: (before: [StackItem], after: [StackItem])? = nil,
+                otherLayers: [(layerID: UUID, deltas: [TileDelta])] = []) {
         self.name = name
         self.layerID = layerID
         self.deltas = deltas
         self.structure = structure
+        self.otherLayers = otherLayers
         spillURL = nil
     }
 
+    /// Toutes les tuiles touchées, calque par calque (pour rafraîchir l'affichage).
+    public var allChanges: [(layerID: UUID, coords: [TileCoord])] {
+        [(layerID, deltas.map(\.coord))] + otherLayers.map { ($0.layerID, $0.deltas.map(\.coord)) }
+    }
+
     /// Octets occupés en mémoire (les instantanés de structure ne référencent que des calques existants).
-    public var byteSize: Int { deltas.reduce(0) { $0 + $1.before.byteSize + $1.after.byteSize } }
+    public var byteSize: Int {
+        (deltas + otherLayers.flatMap(\.deltas)).reduce(0) { $0 + $1.before.byteSize + $1.after.byteSize }
+    }
     public var isSpilled: Bool { spillURL != nil }
 }
 
@@ -109,6 +120,10 @@ public final class UndoRedoManager {
             guard let layer = target.tiledLayer(id: entry.layerID) else { return nil }
             for delta in deltas { layer.restore(delta.before, at: delta.coord) }
         }
+        for other in entry.otherLayers {
+            guard let layer = target.tiledLayer(id: other.layerID) else { continue }
+            for delta in other.deltas { layer.restore(delta.before, at: delta.coord) }
+        }
         if let structure = entry.structure { target.restoreStructure(structure.before) }
         appliedCount -= 1
         return entry
@@ -124,6 +139,10 @@ public final class UndoRedoManager {
         if !deltas.isEmpty {
             guard let layer = target.tiledLayer(id: entry.layerID) else { return nil }
             for delta in deltas { layer.restore(delta.after, at: delta.coord) }
+        }
+        for other in entry.otherLayers {
+            guard let layer = target.tiledLayer(id: other.layerID) else { continue }
+            for delta in other.deltas { layer.restore(delta.after, at: delta.coord) }
         }
         appliedCount += 1
         return entry

@@ -9,13 +9,35 @@ import UIKit
 enum PaintTool: String, CaseIterable {
     case brush
     case eraser
+    case smudge
+    case clone
+    case fill
+    case gradient
 
     var label: String {
         switch self {
         case .brush: "Pinceau"
         case .eraser: "Gomme"
+        case .smudge: "Doigt"
+        case .clone: "Clonage"
+        case .fill: "Remplissage"
+        case .gradient: "Dégradé"
         }
     }
+
+    var symbol: String {
+        switch self {
+        case .brush: "paintbrush.pointed"
+        case .eraser: "eraser"
+        case .smudge: "hand.point.up.left"
+        case .clone: "square.on.square.dashed"
+        case .fill: "drop"
+        case .gradient: "circle.lefthalf.striped.horizontal"
+        }
+    }
+
+    /// Outils qui lisent les pixels pendant le trait : chemin CPU.
+    var needsCPU: Bool { self == .smudge || self == .clone }
 }
 
 /// État de l'écran Toile : un calque, l'historique, la vue, les outils et l'affichage.
@@ -69,6 +91,24 @@ final class CanvasSession {
     var toneMapping: ToneMapping = .clip
     var exposure = 0.0
     var showColorPicker = false
+
+    // Outils sphériques (voir SphereToolsUI.swift)
+    var symmetry = SymmetrySettings()
+    var guidesEnabled = false
+    var guideSpacing = 15.0
+    var gradientShape: SphericalGradient.Shape = .linear
+    var fillThreshold = 0.1
+    var smudgeStrength = 0.6
+    var cloneSource: Vec3?
+    var showRotation = false
+    /// Aperçu de rotation de la sphère, en degrés (lacet, tangage, roulis).
+    var sphereRotation: SIMD3<Double> = .zero
+    @ObservationIgnored var warp: WarpEngine?
+    @ObservationIgnored var cloneSampler: LayerSampler?
+    @ObservationIgnored var cloneRotation = matrix_identity_double3x3
+    @ObservationIgnored var gradientStart: Vec3?
+    @ObservationIgnored var lastDirection: Vec3?
+    @ObservationIgnored var smudgePrevious: [Vec3] = []
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
@@ -148,25 +188,67 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
-    private func dab(at center: Vec3, pressure: Double) -> SphericalDab {
+    func dab(at center: Vec3, pressure: Double) -> SphericalDab {
         let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
         return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase)
     }
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        lastDirection = d
+        switch tool {
+        case .fill:
+            fill(at: d)
+            return
+        case .gradient:
+            gradientStart = d
+            return
+        case .clone where cloneSource == nil:
+            cloneSource = d
+            fileMessage = "Source du clonage définie : peins ailleurs pour la recopier"
+            return
+        default:
+            break
+        }
+        canvas.forceCPU = tool.needsCPU
         canvas.beginStroke()
         if tool == .brush { rememberColor() }
-        canvas.add(sampler.begin(at: d).map { dab(at: $0, pressure: pressure) })
+        let centers = sampler.begin(at: d)
+        switch tool {
+        case .smudge:
+            smudgePrevious = symmetry.images(of: d)
+        case .clone:
+            beginClone(at: d)
+            applyClone(centers, pressure: pressure)
+        default:
+            canvas.add(symmetricDabs(centers, pressure: pressure))
+        }
     }
 
     func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
-        guard let canvas, canvas.isStroking, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        lastDirection = d
+        guard let canvas, canvas.isStroking else { return }
         let spacing = max(settings.radius(pressure: pressure) * settings.spacing, 1e-4)
-        canvas.add(sampler.add(d, spacing: spacing).map { dab(at: $0, pressure: pressure) })
+        let centers = sampler.add(d, spacing: spacing)
+        switch tool {
+        case .smudge: applySmudge(centers, pressure: pressure)
+        case .clone: applyClone(centers, pressure: pressure)
+        default: canvas.add(symmetricDabs(centers, pressure: pressure))
+        }
+    }
+
+    /// Dabs du trait et leurs copies par symétrie.
+    private func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
+        centers.flatMap { symmetry.images(of: $0) }.map { dab(at: $0, pressure: pressure) }
     }
 
     func strokeEnded() {
+        if tool == .gradient, let start = gradientStart, let end = lastDirection {
+            gradientStart = nil
+            applyGradient(from: start, to: end)
+            return
+        }
         guard let canvas, canvas.isStroking else { return }
         if let result = canvas.endStroke(), !result.deltas.isEmpty {
             history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: result.layerID, deltas: result.deltas))
@@ -267,7 +349,7 @@ final class CanvasSession {
         tool = .brush
     }
 
-    private func rememberColor() {
+    func rememberColor() {
         recentColors.removeAll { simd_length($0 - color) < 1e-4 }
         recentColors.insert(color, at: 0)
         if recentColors.count > Self.maxRecentColors { recentColors.removeLast() }
@@ -352,6 +434,8 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         var uniforms = ViewUniforms(parameters, viewportHeight: Int(size.height), textureHeight: layers.below.height,
                                     exposure: session.exposure, toneMapping: session.toneMapping)
         canvas.configure(&uniforms)
+        uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
+        uniforms.setGuides(enabled: session.guidesEnabled, spacingDegrees: session.guideSpacing)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()
@@ -583,11 +667,7 @@ struct CanvasToolbar: View {
             }
 
             HStack(spacing: 16) {
-                Picker("Outil", selection: $session.tool) {
-                    ForEach(PaintTool.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
+                ToolPicker(session: session)
 
                 Button {
                     session.showColorPicker = true
@@ -602,10 +682,8 @@ struct CanvasToolbar: View {
                         .padding(18)
                 }
 
-                Toggle("Pression → taille", isOn: $session.settings.pressureAffectsSize)
-                    .fixedSize()
-                Toggle("Pression → opacité", isOn: $session.settings.pressureAffectsOpacity)
-                    .fixedSize()
+                ToolOptions(session: session)
+                SphereToolsMenus(session: session)
 
                 Menu("Fusion : \(session.blendSpace.label)") {
                     ForEach(BlendSpace.allCases, id: \.self) { space in

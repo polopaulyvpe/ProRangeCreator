@@ -26,6 +26,10 @@ public final class StackCanvas {
         didSet { setNeedsRefresh() }
     }
     public var paper: SIMD3<Float> = [1, 1, 1]
+    /// Outils qui lisent les pixels pendant le trait (doigt, clonage) : chemin CPU imposé.
+    public var forceCPU = false {
+        didSet { if forceCPU != oldValue { setNeedsRefresh() } }
+    }
 
     public let below: DisplayTexture?
     public let active: DisplayTexture?
@@ -111,6 +115,12 @@ public final class StackCanvas {
         }
     }
 
+    /// Modification libre du calque cible pendant un trait sur le chemin CPU (doigt, clonage) : `body` renvoie les tuiles touchées.
+    public func edit(_ body: (TiledLayer) -> Set<TileCoord>) {
+        guard stroking, !usesFastPath, let target = strokeLayer else { return }
+        compositeDirty.formUnion(body(target))
+    }
+
     /// Termine le trait : renvoie le calque modifié et ses deltas (vides si rien n'a changé).
     public func endStroke() -> (layerID: UUID, deltas: [TileDelta])? {
         guard stroking, let target = strokeLayer else { return nil }
@@ -193,7 +203,7 @@ public final class StackCanvas {
     }
 
     private func fastPathPossible() -> Bool {
-        guard brush != nil, !paintingMask, let item = stack.item(activeID), let layer = item.layer,
+        guard brush != nil, !forceCPU, !paintingMask, let item = stack.item(activeID), let layer = item.layer,
               layer.format == .rgba16Float, item.parent == nil, !item.isClipped, item.mask == nil,
               let index = rootIndexOfActive else { return false }
         let aboveItems = stack.children(of: nil).dropFirst(index + 1)

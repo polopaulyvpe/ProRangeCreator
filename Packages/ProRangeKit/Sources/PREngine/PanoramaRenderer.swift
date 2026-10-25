@@ -1,7 +1,8 @@
 import Metal
+import simd
 import PRCore
 
-/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : neuf `float4`).
+/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : treize `float4`).
 public struct ViewUniforms {
     public var rot0: SIMD4<Float>
     public var rot1: SIMD4<Float>
@@ -13,6 +14,12 @@ public struct ViewUniforms {
     public var paper: SIMD4<Float>
     /// Calque actif : opacité (0 = pas de calque actif séparé), code du mode, dessus présent, espace de fusion.
     public var layer: SIMD4<Float> = .zero
+    /// Aperçu de rotation de la sphère (inverse, en colonnes ; w = 1 si actif).
+    public var contentRot0: SIMD4<Float> = .zero
+    public var contentRot1: SIMD4<Float> = .zero
+    public var contentRot2: SIMD4<Float> = .zero
+    /// Guides : actifs, espacement en degrés, opacité.
+    public var guides: SIMD4<Float> = .zero
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
                 exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
@@ -26,6 +33,23 @@ public struct ViewUniforms {
         unfolded = [Float(p.unfoldedCenter.x), Float(p.unfoldedCenter.y), Float(p.unfoldedSpan), Float(p.morph)]
         display = [Float(exposure), Float(toneMapping.rawValue), Float(viewportHeight), Float(textureHeight)]
         self.background = [background.x, background.y, background.z, 1]
+    }
+
+    /// Montre le contenu tourné de `rotation` sans toucher aux pixels (nil = pas d'aperçu).
+    public mutating func setContentRotation(_ rotation: simd_double3x3?) {
+        guard let rotation else {
+            contentRot0 = .zero
+            return
+        }
+        let inverse = rotation.transpose
+        func column(_ c: SIMD3<Double>, _ w: Float) -> SIMD4<Float> { [Float(c.x), Float(c.y), Float(c.z), w] }
+        contentRot0 = column(inverse.columns.0, 1)
+        contentRot1 = column(inverse.columns.1, 0)
+        contentRot2 = column(inverse.columns.2, 0)
+    }
+
+    public mutating func setGuides(enabled: Bool, spacingDegrees: Double = 15, opacity: Double = 0.45) {
+        guides = [enabled ? 1 : 0, Float(spacingDegrees), Float(opacity), 0]
     }
 
     /// Décrit la composition à faire dans le shader.

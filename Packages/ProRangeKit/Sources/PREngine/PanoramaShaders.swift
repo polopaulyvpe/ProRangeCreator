@@ -18,6 +18,10 @@ enum PanoramaShaders {
         float4 background;  // couleur hors panorama
         float4 paper;       // fond de la toile, sous le calque (blanc)
         float4 layer;       // calque actif : opacité (0 = absent ou masqué), mode, dessus présent, espace (0 perceptuel, 1 linéaire)
+        float4 contentRot0; // aperçu de rotation de la sphère : inverse, colonne 0 ; w = 1 si actif
+        float4 contentRot1;
+        float4 contentRot2;
+        float4 guides;      // actifs, espacement (degrés), opacité, inutilisé
     };
 
     struct VOut {
@@ -223,13 +227,32 @@ enum PanoramaShaders {
         float pixelAngle = mix(2.0 * u.shiftTan.z / u.display.z, u.unfolded.z * PI / u.display.z, morph);
         float texelAngle = PI / u.display.w;
         float lod = max(0.0, log2(pixelAngle / texelAngle));
+        // Guides : liés au repère du monde (horizon, méridiens), donc calculés avant l'aperçu de rotation du contenu.
+        float guide = 0.0;
+        if (u.guides.x > 0.5) {
+            float spacing = u.guides.y;
+            float latDeg = (0.5 - uv.y) * 180.0;
+            float lonDeg = (uv.x - 0.5) * 360.0;
+            float dLat = abs(fract(latDeg / spacing + 0.5) - 0.5) * spacing * PI / 180.0;
+            float dLon = abs(fract(lonDeg / spacing + 0.5) - 0.5) * spacing * PI / 180.0 * cos(latDeg * PI / 180.0);
+            float width = max(pixelAngle, 1e-5);
+            guide = max(clamp(1.0 - dLat / width, 0.0, 1.0), clamp(1.0 - dLon / width, 0.0, 1.0)) * u.guides.z;
+            float horizon = clamp(1.0 - abs(latDeg) * PI / 180.0 / (2.0 * width), 0.0, 1.0);
+            guide = max(guide, horizon);
+        }
+        if (u.contentRot0.w > 0.5) {
+            float3 d = directionFromUV(uv);
+            d = u.contentRot0.xyz * d.x + u.contentRot1.xyz * d.y + u.contentRot2.xyz * d.z;
+            uv = uvFromDirection(d);
+        }
         bool perceptual = u.layer.w < 0.5;
         // Dessous (papier et calques inférieurs déjà composés), puis calque actif avec son mode, puis dessus (tout en Normal).
         float4 c = pano.sample(s, uv, level(lod));
         if (u.layer.x > 0.0) { c = compositeLayer(c, active.sample(s, uv, level(lod)), int(u.layer.y), u.layer.x, perceptual); }
         if (u.layer.z > 0.5) { c = compositeLayer(c, above.sample(s, uv, level(lod)), 0, 1.0, perceptual); }
         c.rgb += u.paper.rgb * (1.0 - c.a);
-        return float4(toneMap(c.rgb * exp2(u.display.x), int(u.display.y)), 1.0);
+        float3 shown = toneMap(c.rgb * exp2(u.display.x), int(u.display.y));
+        return float4(mix(shown, float3(0.2, 0.75, 1.0), guide), 1.0);
     }
     """
 }
