@@ -29,8 +29,8 @@ final class CanvasSession {
     /// La pile est une classe : `layersVersion` signale ses changements à SwiftUI.
     @ObservationIgnored private(set) var stack = LayerStack(width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
     private(set) var history = UndoRedoManager()
-    private(set) var layersVersion = 0
-    private(set) var activeID = UUID()
+    var layersVersion = 0
+    var activeID = UUID()
     private(set) var paintingMask = false
     /// Calques garantis par la mémoire disponible au dernier contrôle (voir `MemoryBudget`).
     private(set) var guaranteedLayers = LayerStack.maxLayers

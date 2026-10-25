@@ -73,7 +73,7 @@ extension CanvasSession {
         recordStructure("Visibilité") { stack.update(id) { $0.isVisible.toggle() } }
     }
 
-    func setBlendMode(_ mode: BlendMode) {
+    func setBlendMode(_ mode: PRCore.BlendMode) {
         recordStructure("Mode de fusion") { stack.update(activeID) { $0.blendMode = mode } }
     }
 
@@ -262,7 +262,7 @@ struct LayersPanel: View {
                 .onChange(of: opacity) { session.previewOpacity(Float(opacity)) }
             }
             Picker("Mode", selection: Binding(get: { item.blendMode }, set: { session.setBlendMode($0) })) {
-                ForEach(BlendMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                ForEach(PRCore.BlendMode.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.menu)
 
