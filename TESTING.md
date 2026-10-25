@@ -23,6 +23,7 @@ gh run view --log-failed
 | `BlendModeTests` | Valeurs connues des modes séparables ; comportement > 1 (bornés / non bornés) ; règles de luminosité des modes non séparables ; codes identiques au shader ; composition (Procreate, transparent, opacité nulle) ; Normal = pinceau ; verrou alpha |
 | `SphereToolsTests` | Symétries (nombre de copies, reflets, latitude conservée en radiale, axe qui suit la vue) ; paramètre des dégradés linéaire et radial ; rotation minimale entre deux directions |
 | `SelectionShapeTests` | Rectangle, ellipse, polygone ; modes de combinaison ; projection inverse exacte (rectiligne, fenêtre plane, dépliée près de la couture), rien derrière la caméra ; transformation sphérique (origine → cible, inverse, échelle angulaire) |
+| `DeformationTests` | Gnomonique aller-retour ; homographie par quatre coins (coins, inverse, identité, cas dégénéré) ; distorsion (identité, décalage, hémisphère opposé) ; QuickShape (ligne tremblée, cercle, gribouillis refusé) |
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
@@ -49,6 +50,7 @@ gh run view --log-failed
 |---|---|
 | `TiledLayerTests` | Calque 16K vierge sans aucune tuile ; dab identique à la toile de référence (arrondi en demi-flottants) ; petit dab limité aux tuiles voisines ; dab au pôle (toute la rangée) et sur la couture ; remplissage uniforme et vidage ; recompression sans perte ; calque RGBA8 |
 | `LayerStackTests` | Ajouter, déplacer, grouper, dégrouper, supprimer (dernier calque protégé) ; plafond de 50 et duplication indépendante ; annulation de structure ; modes et visibilité dans le composite ; écrêtage, masque, isolation des groupes ; fusion et aplatissement fidèles et annulables ; projet v2 aller-retour et lecture d'un v1 |
+| `DeformationToolTests` | Liquify pousser (le contenu avance), tourbillon, pincer et gonfler (centre fixe) ; pose d'une image face à une direction ; distorsion qui déplace le contenu |
 | `SelectionMaskTests` | Sélections par formes depuis deux vues, ajout, retrait, inversion, effacement ; adoucissement ; sélection automatique ; pinceau limité à la sélection ; contrainte d'une opération ; transformation du contenu et de la sélection ; copie masquée |
 | `SpatialToolTests` | Remplissage dans un anneau, à travers la couture et le pôle, seuil ; dégradé radial ; clonage par rotation ; doigt qui traîne la couleur ; rotation CPU ; entrée d'historique multi-calques |
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |

@@ -288,6 +288,30 @@ Méthode validée au point de contrôle :
   - sans sélection, tout le calque est transformé ;
   - limite : pendant l'aperçu, le contenu reste aussi visible à sa place d'origine jusqu'à « Appliquer ».
 
-### Lot suivant
+### Lot C (fait)
 
-- **C** : liquify (champ de déplacement tangent), QuickShape (grands cercles, petits cercles, ellipses sphériques), texte (rendu Core Text posé en patch rectiligne), déformation.
+- **Liquify** (`TiledLayer.liquify`) :
+  - quatre modes : pousser (rotation qui ramène vers le dab précédent), tourbillon (rotation autour du centre), pincer et gonfler (échelle dans le plan tangent) ;
+  - le déplacement est pondéré par la couverture du dab, dureté comprise : il s'annule au bord, sans couture ;
+  - il lit l'état courant, donc les déformations s'accumulent le long du trait ;
+  - chemin CPU, symétrie prise en compte ;
+  - limite : tourbillon et pincement n'agissent que quand le doigt bouge, pas en continu à l'arrêt.
+- **QuickShape** :
+  - un trait de pinceau ou de gomme suivi d'un arrêt de 0,6 s est reconnu comme un **arc de grand cercle** (écart au grand cercle des extrémités inférieur à 12 % de la corde) ou un **petit cercle** (trait fermé, rayon constant à 24 % près) ;
+  - le trait à main levée est alors annulé et la forme propre repeinte dans le même trait ;
+  - pas d'ellipse ni de polygone pour l'instant, et la forme ne se modifie pas après coup.
+- **Texte** :
+  - rendu UIKit (police système grasse, couleur courante), puis converti en linéaire prémultiplié ;
+  - posé par `placeImage` comme une photo tenue face à la direction regardée (projection rectiligne, largeur angulaire réglable), sur un **nouveau calque** ;
+  - une seule entrée d'historique (structure + pixels) ;
+  - le texte est rastérisé : il ne se modifie plus comme un texte.
+  - `placeImage` servira aussi à l'import d'une image plate (mode B de la section 15, phase 7).
+- **Distorsion** (`SphericalDistort`) :
+  - quatre poignées sur le plan gnomonique au centre de la sélection ;
+  - une **homographie** envoie le carré d'origine sur le quadrilatère tiré ;
+  - c'est exact pour une rotation de la sphère, qui agit comme une homographie de ce plan ;
+  - les droites (grands cercles) restent droites ;
+  - aperçu dans le shader (homographie inverse) ; application par mapping inverse au contenu et à la sélection ;
+  - limité à l'hémisphère avant de l'origine ;
+  - **pas de déformation par grille** (warp à mailles) : non faite dans ce lot.
+- Transformation et distorsion partagent `TiledLayer.applyWarp` et `SelectionMask.warp`.
