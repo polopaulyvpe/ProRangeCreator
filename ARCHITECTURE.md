@@ -266,7 +266,28 @@ Méthode validée au point de contrôle :
   - la lecture se fait dans un instantané pris au début du trait.
 - Le doigt et le clonage passent par le **chemin CPU** (`StackCanvas.forceCPU`, puis `edit`), car ils lisent les pixels pendant le trait.
 
-### Lots suivants
+### Lot B (fait)
 
-- **B** : sélections (rectangle et ellipse sur l'écran projetés sur la sphère, main levée en polygone sphérique, automatique par propagation), ajout, retrait, inversion, adoucissement, puis transformation de la sélection (libre, uniforme) par mapping inverse.
+- **Sélection** (`SelectionMask`) :
+  - c'est un calque tuilé de valeurs dans [0, 1] : rien de sélectionné ne coûte rien, une tuile entièrement sélectionnée ne coûte qu'un pixel ;
+  - ses changements s'enregistrent dans l'historique comme ceux d'un calque (`SessionHistoryTarget`).
+- **Formes** (rectangle, ellipse, main levée) : tracées à l'écran en NDC, puis évaluées sur la sphère en projetant chaque direction dans la vue du tracé (`ProjectionParameters.ndc(of:)`, inverse exact de la projection). On sélectionne ce qu'on voit, quelle que soit la vue (sphère, fenêtre plane ou dépliée). Rien n'est sélectionné derrière la caméra.
+- **Automatique** : propagation sur le calque cible, avec un seuil, la couture et les pôles (même code que le remplissage).
+- **Combinaison** : remplacer, ajouter (max) ou retirer (min avec 1 − nouveau). Il y a aussi inverser, tout sélectionner, désélectionner.
+- **Adoucir** : trois passes de flou boîte séparables. Le rayon horizontal vaut r / cos(latitude), pour que le rayon reste constant en angle sur la sphère.
+- **Effet sur les outils** :
+  - pinceau et gomme : la couverture du dab est multipliée par la sélection ;
+  - doigt, clonage, remplissage, dégradé : l'opération est contrainte après coup, chaque pixel revenant vers son état d'avant en proportion de ce qui n'est pas sélectionné (`constrainCurrentOperation`) ;
+  - avec une sélection, la peinture passe par le chemin CPU.
+- **Affichage** : hors sélection, l'image est assombrie (texture de sélection à 4K au plus).
+- **Transformer** (`SphericalTransform`) :
+  - échelle (uniforme ou X/Y) et rotation dans le plan tangent au centre de la sélection, puis déplacement (rotation de la sphère vers le point sous le doigt) ;
+  - aperçu du contenu flottant dans le shader, par la même transformation inverse ;
+  - l'application se fait par mapping inverse : le contenu sélectionné est retiré, transformé et reposé par-dessus le reste, et la sélection suit ;
+  - une seule entrée d'historique, pour le calque et la sélection ;
+  - sans sélection, tout le calque est transformé ;
+  - limite : pendant l'aperçu, le contenu reste aussi visible à sa place d'origine jusqu'à « Appliquer ».
+
+### Lot suivant
+
 - **C** : liquify (champ de déplacement tangent), QuickShape (grands cercles, petits cercles, ellipses sphériques), texte (rendu Core Text posé en patch rectiligne), déformation.

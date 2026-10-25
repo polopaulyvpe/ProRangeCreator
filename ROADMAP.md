@@ -9,7 +9,7 @@
 | 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | 🟡 code et 56 tests verts (GPU contre CPU sur le runner) ; reste à mesurer sur l’iPad la latence du trait (cible ≤ 16 ms) et à valider la sensation ; pas encore de prédiction des touches |
 | — | **MVP** = phases 0 à 3 + export EXR/HDR simple | 🟡 code complet, 66 tests verts (relecture ImageIO comprise) ; reste la validation sur l’iPad (installation bloquée côté Apple) |
 | 4 | Calques, modes de fusion, masques, budget mémoire | 🟡 pile 50 calques, 26 modes, masques, groupes, écrêtage, verrou alpha, fusion, aplatissement, projet v2 ; shader contre CPU testé pour les 26 modes ; reste la validation sur l’iPad (fluidité du chemin CPU, mémoire des 3 textures) |
-| 5 | Outils sphériques | 🟡 lot A fait (rotation de la sphère, symétrie, guides, remplissage, dégradés, doigt, clonage) ; lots B (sélections, transformation) et C (liquify, QuickShape, texte, déformation) à faire |
+| 5 | Outils sphériques | 🟡 lot A fait (rotation de la sphère, symétrie, guides, remplissage, dégradés, doigt, clonage) ; lot B (sélections, transformation) fait ; lot C (liquify, QuickShape, texte, déformation) à faire |
 | 6 | Ajustements et filtres | ⏳ |
 | 7 | Import/export complet, import de pinceaux (D9, D10) | ⏳ |
 | 8 | HDR et lumière (D11) | ⏳ |
