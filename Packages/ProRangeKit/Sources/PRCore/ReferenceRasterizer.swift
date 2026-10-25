@@ -17,8 +17,10 @@ public final class EquirectCanvas {
         self.width = width
         self.height = height
         pixels = Array(repeating: fill, count: width * height)
-        let thetas = (0..<height).map { (Double($0) + 0.5) / Double(height) * .pi }
-        let phis = (0..<width).map { ((Double($0) + 0.5) / Double(width) - 0.5) * 2 * .pi }
+        let rowStep: Double = .pi / Double(height)
+        let columnStep: Double = 2 * .pi / Double(width)
+        let thetas: [Double] = (0..<height).map { y in (Double(y) + 0.5) * rowStep }
+        let phis: [Double] = (0..<width).map { x in (Double(x) + 0.5) * columnStep - .pi }
         rowSin = thetas.map(sin)
         rowCos = thetas.map(cos)
         colSin = phis.map(sin)

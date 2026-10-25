@@ -66,7 +66,8 @@ final class SphericalBrushTests: XCTestCase {
             for y in 0..<canvas.height {
                 for x in 0..<canvas.width where canvas[x, y].w >= 0.5 {
                     let p = frame.project(canvas.direction(x: x, y: y))
-                    let sector = Int((atan2(p.x, p.y) + .pi) / (2 * .pi) * Double(sectors)) % sectors
+                    let turn: Double = (atan2(p.x, p.y) + .pi) / (2 * .pi)
+                    let sector = Int(turn * Double(sectors)) % sectors
                     reach[sector] = max(reach[sector], simd_length(p))
                 }
             }

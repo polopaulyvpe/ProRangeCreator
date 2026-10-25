@@ -170,8 +170,9 @@ struct SpikeCanvasView: View {
                 .gesture(
                     DragGesture(minimumDistance: 0, coordinateSpace: .local)
                         .onChanged { value in
-                            let uv = SIMD2<Double>(min(max(value.location.x / size.width, 0), 0.999_999),
-                                                   min(max(value.location.y / size.height, 0), 1))
+                            let u = Double(value.location.x / size.width)
+                            let v = Double(value.location.y / size.height)
+                            let uv = SIMD2<Double>(min(max(u, 0), 0.999_999), min(max(v, 0), 1))
                             if isDrawing {
                                 model.strokeMoved(uv: uv)
                             } else {
@@ -229,8 +230,8 @@ struct SpikeCanvasView: View {
             }
             .stroke(.gray.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [6, 6]))
             Path { p in
-                for lat in [60.0, -60.0] {
-                    let y = (90 - lat) / 180 * geo.size.height
+                for lat: CGFloat in [60, -60] {
+                    let y: CGFloat = (90 - lat) / 180 * geo.size.height
                     p.move(to: CGPoint(x: 0, y: y))
                     p.addLine(to: CGPoint(x: geo.size.width, y: y))
                 }

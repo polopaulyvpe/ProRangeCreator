@@ -7,9 +7,9 @@ public typealias Vec3 = SIMD3<Double>
 /// `u = atan2(x, -z) / 2π + 0.5`, `v = acos(y) / π`, v = 0 au zénith, u = 0.5 face à -Z.
 public enum Equirect {
     public static func uv(from d: Vec3) -> SIMD2<Double> {
-        let u = atan2(d.x, -d.z) / (2 * .pi) + 0.5
-        let v = acos(min(1, max(-1, d.y))) / .pi
-        return [u, v]
+        let u: Double = atan2(d.x, -d.z) / (2 * .pi) + 0.5
+        let v: Double = acos(min(1, max(-1, d.y))) / .pi
+        return SIMD2<Double>(u, v)
     }
 
     public static func direction(u: Double, v: Double) -> Vec3 {
@@ -37,7 +37,9 @@ public enum Equirect {
     public static func longitude(of d: Vec3) -> Double { atan2(d.x, -d.z) }
 
     public static func direction(latitude: Double, longitude: Double) -> Vec3 {
-        direction(u: longitude / (2 * .pi) + 0.5, v: (.pi / 2 - latitude) / .pi)
+        let u: Double = longitude / (2 * .pi) + 0.5
+        let v: Double = 0.5 - latitude / .pi
+        return direction(u: u, v: v)
     }
 }
 

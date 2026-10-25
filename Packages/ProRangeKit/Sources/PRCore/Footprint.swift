@@ -18,22 +18,26 @@ public struct EquirectSpan: Equatable, Sendable {
         let lon0 = Equirect.longitude(of: center)
         let top = lat0 + radius
         let bottom = lat0 - radius
-        let h = Double(height)
+        let halfPi: Double = .pi / 2
+        let rowsPerRadian: Double = Double(height) / .pi
+        let columnsPerRadian: Double = Double(width) / (2 * .pi)
 
-        let y0 = Int(floor((Double.pi / 2 - min(top, .pi / 2)) / .pi * h))
-        let y1 = Int(ceil((Double.pi / 2 - max(bottom, -.pi / 2)) / .pi * h))
-        rows = max(0, y0)...min(height - 1, y1)
+        let vTop: Double = (halfPi - min(top, halfPi)) * rowsPerRadian
+        let vBottom: Double = (halfPi - max(bottom, -halfPi)) * rowsPerRadian
+        rows = max(0, Int(floor(vTop)))...min(height - 1, Int(ceil(vBottom)))
 
         let full = [0...(width - 1)]
-        let s = sin(radius) / cos(lat0)
-        guard top < .pi / 2, bottom > -.pi / 2, s < 1 else {
+        let s: Double = sin(radius) / cos(lat0)
+        guard top < halfPi, bottom > -halfPi, s < 1 else {
             columns = full
             return
         }
-        let dLon = asin(s)
-        let w = Double(width)
-        let x0 = Int(floor(((lon0 - dLon) / (2 * .pi) + 0.5) * w)) - 1
-        let x1 = Int(ceil(((lon0 + dLon) / (2 * .pi) + 0.5) * w)) + 1
+        let dLon: Double = asin(s)
+        let halfWidth: Double = Double(width) / 2
+        let uMin: Double = (lon0 - dLon) * columnsPerRadian + halfWidth
+        let uMax: Double = (lon0 + dLon) * columnsPerRadian + halfWidth
+        let x0 = Int(floor(uMin)) - 1
+        let x1 = Int(ceil(uMax)) + 1
         guard x1 - x0 + 1 < width else {
             columns = full
             return
