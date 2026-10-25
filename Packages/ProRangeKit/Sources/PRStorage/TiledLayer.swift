@@ -94,6 +94,15 @@ public final class TiledLayer {
         }
     }
 
+    /// Copie indépendante (mêmes pixels, nouvel identifiant), sans historique ni déversement.
+    public func duplicate(name: String? = nil) -> TiledLayer {
+        let copy = TiledLayer(name: name ?? self.name, width: width, height: height, format: format)
+        copy.opacity = opacity
+        copy.isVisible = isVisible
+        for coord in storedTiles { copy.restore(state(of: coord), at: coord) }
+        return copy
+    }
+
     /// Vrai si la tuile existe (sinon elle est transparente).
     public func isStored(_ coord: TileCoord) -> Bool { tiles[coord] != nil }
 
@@ -159,7 +168,7 @@ public final class TiledLayer {
 
     /// Peint un dab sphérique. Renvoie les tuiles modifiées.
     @discardableResult
-    public func stamp(_ dab: SphericalDab, space: BlendSpace = .perceptual) -> Set<TileCoord> {
+    public func stamp(_ dab: SphericalDab, space: BlendSpace = .perceptual, alphaLock: Bool = false) -> Set<TileCoord> {
         let evaluator = DabEvaluator(dab, pixelAngle: geometry.pixelAngle)
         let span = evaluator.span(in: geometry)
         let side = TileSize.side
@@ -170,7 +179,7 @@ public final class TiledLayer {
                     let xs = max(columns.lowerBound, tx * side)...min(columns.upperBound, tx * side + side - 1)
                     let ys = max(span.rows.lowerBound, ty * side)...min(span.rows.upperBound, ty * side + side - 1)
                     let coord = TileCoord(x: tx, y: ty)
-                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator, space: space) { touched.insert(coord) }
+                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator, space: space, alphaLock: alphaLock) { touched.insert(coord) }
                 }
             }
         }
@@ -183,6 +192,17 @@ public final class TiledLayer {
         willModify(coord)
         setContent(nil, at: coord)
         putPixels(bytes, at: coord)
+    }
+
+    /// Remplace une tuile par des pixels RGBA linéaires prémultipliés (encodés dans le format du calque). Enregistré.
+    public func replaceTile(_ coord: TileCoord, withPixels pixels: [SIMD4<Float>]) {
+        precondition(pixels.count == TileSize.pixelCount, "taille de tuile invalide")
+        var bytes = [UInt8](repeating: 0, count: format.bytesPerTile)
+        let format = format
+        bytes.withUnsafeMutableBytes { raw in
+            for i in pixels.indices { Self.write(raw.baseAddress!, i, pixels[i], format) }
+        }
+        replaceTile(coord, with: bytes)
     }
 
     /// Remplit tout le calque d'une valeur (RGB linéaire prémultiplié). Zéro vide le calque.
@@ -233,7 +253,7 @@ public final class TiledLayer {
     // MARK: - Tuiles
 
     private func stampTile(_ coord: TileCoord, xs: ClosedRange<Int>, ys: ClosedRange<Int>, evaluator: DabEvaluator,
-                           space: BlendSpace) -> Bool {
+                           space: BlendSpace, alphaLock: Bool) -> Bool {
         // Couverture d'abord : une tuile que le dab ne touche pas n'est ni créée ni enregistrée.
         var coverage = [Float](repeating: 0, count: xs.count * ys.count)
         var any = false
@@ -263,7 +283,7 @@ public final class TiledLayer {
                     if a <= 0 { continue }
                     let index = row + (x - coord.x * side)
                     var p = Self.read(UnsafeRawPointer(base), index, format)
-                    SphericalRasterizer.apply(dab, coverage: a, to: &p, space: space)
+                    SphericalRasterizer.apply(dab, coverage: a, to: &p, space: space, alphaLock: alphaLock)
                     Self.write(base, index, p, format)
                 }
             }

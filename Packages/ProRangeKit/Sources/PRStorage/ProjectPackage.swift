@@ -1,9 +1,10 @@
 import Foundation
+import PRCore
 
 /// Paquet de projet `.prrange` (dossier) :
 /// `manifest.json`, `layers/{id}/tiles/0/{x}_{y}.tile.lzfse|.uniform` (via `TileStore`), `journal.bin` (timelapse).
 public enum ProjectPackage {
-    public static let formatVersion = 1
+    public static let formatVersion = 2
 
     public struct Manifest: Codable, Sendable, Equatable {
         public var formatVersion: Int
@@ -14,6 +15,8 @@ public enum ProjectPackage {
         public var createdAt: Date
         public var modifiedAt: Date
         public var layers: [LayerRecord]
+        /// Structure de la pile (v2). Absente en v1 : chaque calque est alors un élément racine.
+        public var items: [ItemRecord]?
     }
 
     public struct LayerRecord: Codable, Sendable, Equatable {
@@ -43,7 +46,7 @@ public enum ProjectPackage {
     public static func journalURL(in package: URL) -> URL { package.appendingPathComponent("journal.bin") }
 
     /// Enregistre les calques. Écrit dans un dossier temporaire puis remplace l'ancien paquet (le journal est conservé).
-    public static func save(layers: [TiledLayer], to url: URL, createdAt: Date = Date()) throws {
+    public static func save(layers: [TiledLayer], to url: URL, createdAt: Date = Date(), items: [ItemRecord]? = nil) throws {
         guard let first = layers.first else { throw Failure.noLayers }
         let fm = FileManager.default
         let staging = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).saving")
@@ -57,7 +60,8 @@ public enum ProjectPackage {
         let manifest = Manifest(
             formatVersion: formatVersion, width: first.width, height: first.height, tileSize: TileSize.side,
             colorSpace: "linear-display-p3-premultiplied", createdAt: createdAt, modifiedAt: Date(),
-            layers: layers.map { LayerRecord(id: $0.id, name: $0.name, format: $0.format, opacity: $0.opacity, isVisible: $0.isVisible) })
+            layers: layers.map { LayerRecord(id: $0.id, name: $0.name, format: $0.format, opacity: $0.opacity, isVisible: $0.isVisible) },
+            items: items)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -78,7 +82,7 @@ public enum ProjectPackage {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: url.appendingPathComponent("manifest.json")),
               let manifest = try? decoder.decode(Manifest.self, from: data) else { throw Failure.invalidManifest }
-        guard manifest.formatVersion == formatVersion else { throw Failure.unsupportedVersion(manifest.formatVersion) }
+        guard (1...formatVersion).contains(manifest.formatVersion) else { throw Failure.unsupportedVersion(manifest.formatVersion) }
         guard manifest.tileSize == TileSize.side else { throw Failure.tileSizeMismatch(manifest.tileSize) }
 
         let layers = try manifest.layers.map { record -> TiledLayer in
@@ -97,5 +101,65 @@ public enum ProjectPackage {
             return layer
         }
         return (manifest, layers)
+    }
+
+    /// Un élément de la pile dans le manifest v2.
+    public struct ItemRecord: Codable, Sendable, Equatable {
+        public var id: UUID
+        public var isGroup: Bool
+        public var name: String
+        public var opacity: Float
+        public var isVisible: Bool
+        public var blendMode: BlendMode
+        public var alphaLock: Bool
+        public var isClipped: Bool
+        public var parent: UUID?
+        public var layerID: UUID?
+        public var maskID: UUID?
+    }
+
+    /// Enregistre une pile complète (calques, masques, groupes, propriétés).
+    public static func save(stack: LayerStack, to url: URL, createdAt: Date = Date()) throws {
+        let records = stack.items.map { item in
+            ItemRecord(id: item.id, isGroup: item.isGroup, name: item.name, opacity: item.opacity, isVisible: item.isVisible,
+                       blendMode: item.blendMode, alphaLock: item.alphaLock, isClipped: item.isClipped, parent: item.parent,
+                       layerID: item.layer?.id, maskID: item.mask?.id)
+        }
+        try save(layers: stack.allTiledLayers, to: url, createdAt: createdAt, items: records)
+    }
+
+    /// Ouvre une pile (v2), ou construit une pile plate à partir des calques d'un projet v1.
+    public static func loadStack(from url: URL) throws -> (manifest: Manifest, stack: LayerStack) {
+        let (manifest, layers) = try load(from: url)
+        guard let first = layers.first else { throw Failure.noLayers }
+        let byID = Dictionary(uniqueKeysWithValues: layers.map { ($0.id, $0) })
+        let items: [StackItem]
+        if let records = manifest.items {
+            items = try records.map { record in
+                let kind: StackItem.Kind
+                if record.isGroup {
+                    kind = .group
+                } else {
+                    guard let id = record.layerID, let layer = byID[id] else { throw Failure.invalidManifest }
+                    kind = .layer(layer)
+                }
+                var item = StackItem(id: record.id, kind: kind, name: record.name, parent: record.parent)
+                item.opacity = record.opacity
+                item.isVisible = record.isVisible
+                item.blendMode = record.blendMode
+                item.alphaLock = record.alphaLock
+                item.isClipped = record.isClipped
+                item.mask = record.maskID.flatMap { byID[$0] }
+                return item
+            }
+        } else {
+            items = layers.map { layer in
+                var item = StackItem(kind: .layer(layer), name: layer.name)
+                item.opacity = layer.opacity
+                item.isVisible = layer.isVisible
+                return item
+            }
+        }
+        return (manifest, LayerStack(width: manifest.width, height: manifest.height, format: first.format, items: items))
     }
 }

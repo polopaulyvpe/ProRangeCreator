@@ -22,9 +22,10 @@ final class CancelFlag: @unchecked Sendable {
     }
 }
 
-/// Le calque passe à la tâche d'export : la feuille d'export est modale, personne ne peint pendant ce temps.
-private struct UncheckedLayer: @unchecked Sendable {
-    let layer: TiledLayer
+/// La pile passe à la tâche d'export : la feuille d'export est modale, personne ne peint pendant ce temps.
+private struct UncheckedStack: @unchecked Sendable {
+    let stack: LayerStack
+    let space: BlendSpace
 }
 
 struct ProjectInfo: Identifiable, Hashable {
@@ -67,7 +68,7 @@ extension CanvasSession {
     }
 
     func newProject() {
-        replaceLayer(TiledLayer(name: "Calque 1", width: Self.canvasWidth, height: Self.canvasWidth / 2))
+        replaceStack(LayerStack(width: Self.canvasWidth, height: Self.canvasWidth / 2))
         projectName = "Sans titre"
         projectCreatedAt = Date()
         fileMessage = nil
@@ -77,7 +78,7 @@ extension CanvasSession {
         strokeCancelled()
         let url = Self.projectsDirectory.appendingPathComponent("\(sanitized(projectName)).prrange")
         do {
-            try ProjectPackage.save(layers: [layer], to: url, createdAt: projectCreatedAt)
+            try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
             fileMessage = "Enregistré : \(url.lastPathComponent)"
         } catch {
             fileMessage = "Échec de l'enregistrement : \(error.localizedDescription)"
@@ -86,9 +87,8 @@ extension CanvasSession {
 
     func openProject(_ project: ProjectInfo) {
         do {
-            let (manifest, layers) = try ProjectPackage.load(from: project.url)
-            guard let first = layers.first else { throw ProjectPackage.Failure.noLayers }
-            replaceLayer(first)
+            let (manifest, loaded) = try ProjectPackage.loadStack(from: project.url)
+            replaceStack(loaded)
             projectName = project.name
             projectCreatedAt = manifest.createdAt
             fileMessage = "Ouvert : \(project.name)"
@@ -104,10 +104,10 @@ extension CanvasSession {
     func startExport(format: PanoramaFormat, options: PanoramaExportOptions) {
         guard !isExporting else { return }
         strokeCancelled()
-        let suffix = options.downscale == 1 ? "" : "-\(layer.width / options.downscale / 1024)K"
+        let suffix = options.downscale == 1 ? "" : "-\(stack.width / options.downscale / 1024)K"
         let url = Self.exportsDirectory.appendingPathComponent("\(sanitized(projectName))\(suffix).\(format.fileExtension)")
         let cancel = CancelFlag()
-        let job = UncheckedLayer(layer: layer)
+        let job = UncheckedStack(stack: stack, space: blendSpace)
         exportCancel = cancel
         isExporting = true
         exportProgress = 0
@@ -115,7 +115,7 @@ extension CanvasSession {
         Task.detached(priority: .userInitiated) {
             let result: Result<URL, Error>
             do {
-                try PanoramaExporter.export(job.layer, as: format, options: options, to: url) { progress in
+                try PanoramaExporter.export(job.stack, as: format, options: options, space: job.space, to: url) { progress in
                     Task { @MainActor in self.exportProgress = progress }
                     return !cancel.isCancelled
                 }
@@ -239,7 +239,7 @@ struct ExportSheet: View {
                 Section("Image") {
                     Picker("Résolution", selection: $downscale) {
                         ForEach([1, 2, 4, 8], id: \.self) { f in
-                            Text("\(session.layer.width / f) × \(session.layer.height / f)").tag(f)
+                            Text("\(session.stack.width / f) × \(session.stack.height / f)").tag(f)
                         }
                     }
                     Toggle("Papier blanc sous la peinture", isOn: $includePaper)

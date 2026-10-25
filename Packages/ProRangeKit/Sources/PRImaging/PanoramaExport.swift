@@ -27,34 +27,50 @@ public struct PanoramaExportOptions: Sendable {
     }
 }
 
-/// Lit un calque par bandes de lignes, réduit et composé sur le papier : jamais l'image entière en mémoire.
+/// Lit une pile (ou un calque) par bandes de lignes, composée sur le papier et réduite : jamais l'image entière en mémoire.
 public struct LayerRowSource {
-    public let layer: TiledLayer
+    public let sourceWidth: Int
+    public let sourceHeight: Int
     public let downscale: Int
-    public let paper: SIMD3<Float>?
+    /// Tuile composée, ou nil si rien n'y est peint (on met alors `empty`).
+    private let tile: (TileCoord) -> [SIMD4<Float>]?
+    private let empty: SIMD4<Float>
 
-    public init(layer: TiledLayer, downscale: Int = 1, paper: SIMD3<Float>?) {
+    /// Toute la pile : modes de fusion, masques, groupes et écrêtage, sur le papier (ou transparent si `paper` est nil).
+    public init(stack: LayerStack, downscale: Int = 1, paper: SIMD3<Float>?, space: BlendSpace = .perceptual) {
         precondition(downscale >= 1 && downscale.nonzeroBitCount == 1 && downscale <= TileSize.side, "réduction invalide")
-        self.layer = layer
+        sourceWidth = stack.width
+        sourceHeight = stack.height
         self.downscale = downscale
-        self.paper = paper
+        let occupied = LayerCompositor.occupiedTiles(stack)
+        tile = { coord in
+            occupied.contains(coord) ? LayerCompositor.compositeTile(coord, stack: stack, paper: paper, space: space) : nil
+        }
+        empty = paper.map { SIMD4<Float>($0.x, $0.y, $0.z, 1) } ?? .zero
     }
 
-    public var width: Int { layer.width / downscale }
-    public var height: Int { layer.height / downscale }
+    /// Un seul calque, en mode Normal.
+    public init(layer: TiledLayer, downscale: Int = 1, paper: SIMD3<Float>?) {
+        let stack = LayerStack(width: layer.width, height: layer.height, format: layer.format,
+                               items: [StackItem(kind: .layer(layer), name: layer.name)])
+        self.init(stack: stack, downscale: downscale, paper: paper)
+    }
+
+    public var width: Int { sourceWidth / downscale }
+    public var height: Int { sourceHeight / downscale }
 
     public func rows(_ y: Int, _ count: Int) -> [SIMD4<Float>] {
         let side = TileSize.side
         let f = downscale
-        let sourceWidth = layer.width
+        let sourceWidth = sourceWidth
+        let tilesAcross = (sourceWidth + side - 1) / side
         let sy0 = y * f
-        let sy1 = min(layer.height, (y + count) * f)
-        var source = [SIMD4<Float>](repeating: .zero, count: sourceWidth * (sy1 - sy0))
+        let sy1 = min(sourceHeight, (y + count) * f)
+        var source = [SIMD4<Float>](repeating: empty, count: sourceWidth * (sy1 - sy0))
         for ty in (sy0 / side)...((sy1 - 1) / side) {
-            for tx in 0..<layer.tilesAcross {
+            for tx in 0..<tilesAcross {
                 let coord = TileCoord(x: tx, y: ty)
-                guard layer.isStored(coord) else { continue }
-                let tile = layer.tileFloatPixels(coord)
+                guard let pixels = tile(coord) else { continue }
                 let rowStart = max(sy0, ty * side)
                 let rowEnd = min(sy1, ty * side + side)
                 let x0 = tx * side
@@ -62,7 +78,7 @@ public struct LayerRowSource {
                 for sy in rowStart..<rowEnd {
                     let src = (sy - ty * side) * side
                     let dst = (sy - sy0) * sourceWidth + x0
-                    for i in 0..<w { source[dst + i] = tile[src + i] }
+                    for i in 0..<w { source[dst + i] = pixels[src + i] }
                 }
             }
         }
@@ -82,10 +98,6 @@ public struct LayerRowSource {
                     }
                     p *= weight
                 }
-                if let paper {
-                    let rgb = SIMD3<Float>(p.x, p.y, p.z) + paper * (1 - p.w)
-                    p = SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1)
-                }
                 out[oy * outWidth + ox] = p
             }
         }
@@ -98,7 +110,17 @@ public struct LayerRowSource {
 public enum PanoramaExporter {
     public static func export(_ layer: TiledLayer, as format: PanoramaFormat, options: PanoramaExportOptions = .init(),
                               to url: URL, progress: ExportProgress = { _ in true }) throws {
-        let source = LayerRowSource(layer: layer, downscale: options.downscale, paper: options.paper)
+        try export(LayerRowSource(layer: layer, downscale: options.downscale, paper: options.paper), as: format, to: url, progress: progress)
+    }
+
+    /// Export de toute la pile (calques visibles, modes, masques, groupes).
+    public static func export(_ stack: LayerStack, as format: PanoramaFormat, options: PanoramaExportOptions = .init(),
+                              space: BlendSpace = .perceptual, to url: URL, progress: ExportProgress = { _ in true }) throws {
+        try export(LayerRowSource(stack: stack, downscale: options.downscale, paper: options.paper, space: space),
+                   as: format, to: url, progress: progress)
+    }
+
+    static func export(_ source: LayerRowSource, as format: PanoramaFormat, to url: URL, progress: ExportProgress) throws {
         let partial = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).partial")
         switch format {
         case let .exr(pixelType, compression, includeAlpha):

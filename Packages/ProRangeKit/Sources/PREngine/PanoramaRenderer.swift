@@ -1,7 +1,7 @@
 import Metal
 import PRCore
 
-/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : huit `float4`).
+/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : neuf `float4`).
 public struct ViewUniforms {
     public var rot0: SIMD4<Float>
     public var rot1: SIMD4<Float>
@@ -11,6 +11,8 @@ public struct ViewUniforms {
     public var display: SIMD4<Float>
     public var background: SIMD4<Float>
     public var paper: SIMD4<Float>
+    /// Calque actif : opacité (0 = pas de calque actif séparé), code du mode, dessus présent, espace de fusion.
+    public var layer: SIMD4<Float> = .zero
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
                 exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
@@ -24,6 +26,24 @@ public struct ViewUniforms {
         unfolded = [Float(p.unfoldedCenter.x), Float(p.unfoldedCenter.y), Float(p.unfoldedSpan), Float(p.morph)]
         display = [Float(exposure), Float(toneMapping.rawValue), Float(viewportHeight), Float(textureHeight)]
         self.background = [background.x, background.y, background.z, 1]
+    }
+
+    /// Décrit la composition à faire dans le shader.
+    public mutating func setLayers(activeOpacity: Float, mode: BlendMode, aboveEnabled: Bool, space: BlendSpace) {
+        layer = [activeOpacity, Float(mode.code), aboveEnabled ? 1 : 0, space == .linear ? 1 : 0]
+    }
+}
+
+/// Les textures que le shader compose : dessous (papier compris), calque actif, dessus.
+public struct PanoramaLayers {
+    public var below: any MTLTexture
+    public var active: (any MTLTexture)?
+    public var above: (any MTLTexture)?
+
+    public init(below: any MTLTexture, active: (any MTLTexture)? = nil, above: (any MTLTexture)? = nil) {
+        self.below = below
+        self.active = active
+        self.above = above
     }
 }
 
@@ -45,6 +65,7 @@ public final class PanoramaRenderer {
     private let library: any MTLLibrary
     private let linearSampler: any MTLSamplerState
     private let nearestSampler: any MTLSamplerState
+    private let emptyTexture: any MTLTexture
     private var pipelines: [MTLPixelFormat: any MTLRenderPipelineState] = [:]
 
     public init(device: any MTLDevice) throws {
@@ -52,6 +73,10 @@ public final class PanoramaRenderer {
         library = try device.makeLibrary(source: PanoramaShaders.source, options: nil)
         linearSampler = try Self.makeSampler(device: device, filter: .linear)
         nearestSampler = try Self.makeSampler(device: device, filter: .nearest)
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
+        desc.usage = [.shaderRead]
+        guard let empty = device.makeTexture(descriptor: desc) else { throw Failure.noDevice }
+        emptyTexture = empty
     }
 
     private static func makeSampler(device: any MTLDevice, filter: MTLSamplerMinMagFilter) throws -> any MTLSamplerState {
@@ -78,17 +103,27 @@ public final class PanoramaRenderer {
 
     /// Encode le dessin du panorama dans une passe de rendu déjà ouverte.
     public func encode(into encoder: any MTLRenderCommandEncoder, pixelFormat: MTLPixelFormat,
-                       panorama: any MTLTexture, uniforms: ViewUniforms, filtering: Filtering = .linear) throws {
+                       layers: PanoramaLayers, uniforms: ViewUniforms, filtering: Filtering = .linear) throws {
         var u = uniforms
         encoder.setRenderPipelineState(try pipeline(for: pixelFormat))
         encoder.setFragmentBytes(&u, length: MemoryLayout<ViewUniforms>.stride, index: 0)
-        encoder.setFragmentTexture(panorama, index: 0)
+        encoder.setFragmentTexture(layers.below, index: 0)
+        encoder.setFragmentTexture(layers.active ?? emptyTexture, index: 1)
+        encoder.setFragmentTexture(layers.above ?? emptyTexture, index: 2)
         encoder.setFragmentSamplerState(filtering == .linear ? linearSampler : nearestSampler, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 
+    /// Un seul panorama (sans calque actif séparé).
+    public func encode(into encoder: any MTLRenderCommandEncoder, pixelFormat: MTLPixelFormat,
+                       panorama: any MTLTexture, uniforms: ViewUniforms, filtering: Filtering = .linear) throws {
+        var u = uniforms
+        u.layer = .zero
+        try encode(into: encoder, pixelFormat: pixelFormat, layers: PanoramaLayers(below: panorama), uniforms: u, filtering: filtering)
+    }
+
     /// Rendu hors écran en RGBA16F, relu sur le CPU (tests, export d'aperçu).
-    public func renderOffscreen(panorama: any MTLTexture, width: Int, height: Int,
+    public func renderOffscreen(layers: PanoramaLayers, width: Int, height: Int,
                                 uniforms: ViewUniforms, filtering: Filtering = .linear) throws -> [Float16] {
         let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
         desc.usage = [.renderTarget, .shaderRead]
@@ -101,7 +136,7 @@ public final class PanoramaRenderer {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { throw Failure.commandFailed }
-        try encode(into: encoder, pixelFormat: .rgba16Float, panorama: panorama, uniforms: uniforms, filtering: filtering)
+        try encode(into: encoder, pixelFormat: .rgba16Float, layers: layers, uniforms: uniforms, filtering: filtering)
         encoder.endEncoding()
         commands.commit()
         commands.waitUntilCompleted()
@@ -111,5 +146,12 @@ public final class PanoramaRenderer {
             target.getBytes(raw.baseAddress!, bytesPerRow: width * 8, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
         }
         return out
+    }
+
+    public func renderOffscreen(panorama: any MTLTexture, width: Int, height: Int,
+                                uniforms: ViewUniforms, filtering: Filtering = .linear) throws -> [Float16] {
+        var u = uniforms
+        u.layer = .zero
+        return try renderOffscreen(layers: PanoramaLayers(below: panorama), width: width, height: height, uniforms: u, filtering: filtering)
     }
 }

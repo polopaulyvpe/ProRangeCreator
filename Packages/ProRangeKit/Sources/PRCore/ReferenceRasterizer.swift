@@ -135,6 +135,21 @@ public enum SphericalRasterizer {
     }
 
     /// Applique un dab à un pixel (RGBA linéaire prémultiplié).
+    /// `alphaLock` : la transparence existante est conservée (seule la couleur change là où il y a déjà de la peinture).
+    @inline(__always)
+    public static func apply(_ dab: SphericalDab, coverage: Float, to dst: inout SIMD4<Float>, space: BlendSpace,
+                             alphaLock: Bool) {
+        let original = dst
+        apply(dab, coverage: coverage, to: &dst, space: space)
+        guard alphaLock else { return }
+        if original.w > 0, dst.w > 0 {
+            let rgb = SIMD3<Float>(dst.x, dst.y, dst.z) / dst.w * original.w
+            dst = SIMD4<Float>(rgb.x, rgb.y, rgb.z, original.w)
+        } else {
+            dst = original
+        }
+    }
+
     @inline(__always)
     public static func apply(_ dab: SphericalDab, coverage: Float, to dst: inout SIMD4<Float>, space: BlendSpace) {
         switch dab.mode {

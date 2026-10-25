@@ -71,6 +71,35 @@ public final class DisplayTexture {
         }
     }
 
+    /// Envoie une tuile de pixels déjà composés (RGBA linéaire prémultiplié, `TileSize.side` de côté).
+    public func upload(_ coord: TileCoord, pixels: [SIMD4<Float>]) {
+        let region = MTLRegionMake2D(coord.x * tileSide, coord.y * tileSide, tileSide, tileSide)
+        guard region.origin.x + tileSide <= texture.width, region.origin.y + tileSide <= texture.height else { return }
+        let data = reduce(pixels)
+        data.withUnsafeBytes { raw in
+            texture.replace(region: region, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: tileSide * 8)
+        }
+        mipmapsDirty = true
+    }
+
+    /// Remplit une tuile d'une valeur unique.
+    public func fill(_ coord: TileCoord, with value: SIMD4<Float>) {
+        let region = MTLRegionMake2D(coord.x * tileSide, coord.y * tileSide, tileSide, tileSide)
+        guard region.origin.x + tileSide <= texture.width, region.origin.y + tileSide <= texture.height else { return }
+        var data = [Float16](repeating: 0, count: tileSide * tileSide * 4)
+        let px = [Float16(value.x), Float16(value.y), Float16(value.z), Float16(value.w)]
+        for i in stride(from: 0, to: data.count, by: 4) {
+            data[i] = px[0]
+            data[i + 1] = px[1]
+            data[i + 2] = px[2]
+            data[i + 3] = px[3]
+        }
+        data.withUnsafeBytes { raw in
+            texture.replace(region: region, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: tileSide * 8)
+        }
+        mipmapsDirty = true
+    }
+
     /// Relit une tuile du niveau 0 (pleine résolution seulement), en octets RGBA16F.
     /// Le GPU doit avoir fini d'écrire (attendre le tampon de commandes avant).
     public func readTile(_ coord: TileCoord) -> [UInt8] {

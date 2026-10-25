@@ -7,24 +7,41 @@ public struct TileDelta: Equatable, Sendable {
     public let after: TileState
 }
 
-/// Une opération annulable : les deltas de tuiles d'un calque, en mémoire ou déversés sur disque.
-public struct HistoryEntry: Sendable {
+/// Ce que l'historique sait modifier : les pixels des calques et la structure de la pile.
+public protocol HistoryTarget: AnyObject {
+    func tiledLayer(id: UUID) -> TiledLayer?
+    func restoreStructure(_ snapshot: [StackItem])
+}
+
+/// Une opération annulable : les deltas de tuiles d'un calque (en mémoire ou déversés sur disque)
+/// et, éventuellement, la structure de la pile avant / après (ajout, suppression, fusion, propriétés).
+public struct HistoryEntry {
     public let name: String
     public let layerID: UUID
     /// Vide quand l'entrée est déversée (`spillURL` non nil).
     public internal(set) var deltas: [TileDelta]
     public internal(set) var spillURL: URL?
+    public let structure: (before: [StackItem], after: [StackItem])?
 
-    public init(name: String, layerID: UUID, deltas: [TileDelta]) {
+    public init(name: String, layerID: UUID, deltas: [TileDelta], structure: (before: [StackItem], after: [StackItem])? = nil) {
         self.name = name
         self.layerID = layerID
         self.deltas = deltas
+        self.structure = structure
         spillURL = nil
     }
 
-    /// Octets occupés en mémoire.
+    /// Octets occupés en mémoire (les instantanés de structure ne référencent que des calques existants).
     public var byteSize: Int { deltas.reduce(0) { $0 + $1.before.byteSize + $1.after.byteSize } }
     public var isSpilled: Bool { spillURL != nil }
+}
+
+/// Adaptateur pour une simple liste de calques, sans structure.
+private final class LayerListTarget: HistoryTarget {
+    let layers: [TiledLayer]
+    init(_ layers: [TiledLayer]) { self.layers = layers }
+    func tiledLayer(id: UUID) -> TiledLayer? { layers.first { $0.id == id } }
+    func restoreStructure(_ snapshot: [StackItem]) {}
 }
 
 /// Annuler / rétablir par deltas de tuiles compressés : exact au bit près, sans rejouer les traits.
@@ -74,20 +91,40 @@ public final class UndoRedoManager {
 
     @discardableResult
     public func undo(in layers: [TiledLayer]) throws -> HistoryEntry? {
-        guard canUndo else { return nil }
-        let entry = entries[appliedCount - 1]
-        guard let layer = layers.first(where: { $0.id == entry.layerID }) else { return nil }
-        for delta in try deltas(of: entry) { layer.restore(delta.before, at: delta.coord) }
-        appliedCount -= 1
-        return entry
+        try undo(in: LayerListTarget(layers))
     }
 
     @discardableResult
     public func redo(in layers: [TiledLayer]) throws -> HistoryEntry? {
+        try redo(in: LayerListTarget(layers))
+    }
+
+    /// Annule : pixels d'abord (le calque existe encore), puis structure.
+    @discardableResult
+    public func undo(in target: HistoryTarget) throws -> HistoryEntry? {
+        guard canUndo else { return nil }
+        let entry = entries[appliedCount - 1]
+        let deltas = try deltas(of: entry)
+        if !deltas.isEmpty {
+            guard let layer = target.tiledLayer(id: entry.layerID) else { return nil }
+            for delta in deltas { layer.restore(delta.before, at: delta.coord) }
+        }
+        if let structure = entry.structure { target.restoreStructure(structure.before) }
+        appliedCount -= 1
+        return entry
+    }
+
+    /// Rétablit : structure d'abord (le calque réapparaît), puis pixels.
+    @discardableResult
+    public func redo(in target: HistoryTarget) throws -> HistoryEntry? {
         guard canRedo else { return nil }
         let entry = entries[appliedCount]
-        guard let layer = layers.first(where: { $0.id == entry.layerID }) else { return nil }
-        for delta in try deltas(of: entry) { layer.restore(delta.after, at: delta.coord) }
+        if let structure = entry.structure { target.restoreStructure(structure.after) }
+        let deltas = try deltas(of: entry)
+        if !deltas.isEmpty {
+            guard let layer = target.tiledLayer(id: entry.layerID) else { return nil }
+            for delta in deltas { layer.restore(delta.after, at: delta.coord) }
+        }
         appliedCount += 1
         return entry
     }
@@ -100,7 +137,7 @@ public final class UndoRedoManager {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let nearby = max(0, appliedCount - keepingRecent)..<min(entries.count, appliedCount + keepingRecent)
         var freed = 0
-        for i in entries.indices where !nearby.contains(i) && !entries[i].isSpilled {
+        for i in entries.indices where !nearby.contains(i) && !entries[i].isSpilled && !entries[i].deltas.isEmpty {
             let url = directory.appendingPathComponent("\(UUID().uuidString).history")
             try DeltaCoder.encode(entries[i].deltas).write(to: url, options: .atomic)
             freed += entries[i].byteSize

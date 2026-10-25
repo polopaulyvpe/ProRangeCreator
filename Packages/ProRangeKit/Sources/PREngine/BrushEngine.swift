@@ -14,7 +14,7 @@ public final class BrushEngine {
         var center: SIMD4<Float>   // direction, rayon
         var params: SIMD4<Float>   // dureté, taille angulaire d'un texel, cos(portée), mode (0 peindre, 1 effacer)
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, opacité
-        var options: SIMD4<Float>  // espace de fusion (0 perceptuel, 1 linéaire), inutilisés
+        var options: SIMD4<Float>  // espace de fusion (0 perceptuel, 1 linéaire), verrou alpha, inutilisés
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -30,7 +30,7 @@ public final class BrushEngine {
 
     /// Encode les dabs, dans l'ordre, sur `texture` (RGBA16F lecture/écriture). Renvoie les tuiles touchées.
     @discardableResult
-    public func encode(_ dabs: [SphericalDab], space: BlendSpace, into texture: any MTLTexture,
+    public func encode(_ dabs: [SphericalDab], space: BlendSpace, alphaLock: Bool = false, into texture: any MTLTexture,
                        commandBuffer: any MTLCommandBuffer) -> Set<TileCoord> {
         guard !dabs.isEmpty, let encoder = commandBuffer.makeComputeCommandEncoder() else { return [] }
         let geometry = (width: texture.width, height: texture.height)
@@ -48,11 +48,12 @@ public final class BrushEngine {
             let modeFlag: Float = dab.mode == .erase ? 1 : 0
             let params = SIMD4<Float>(Float(dab.hardness), Float(pixelAngle), Float(cos(evaluator.reach)), modeFlag)
             let spaceFlag: Float = space == .linear ? 1 : 0
+            let lockFlag: Float = alphaLock ? 1 : 0
             for columns in span.columns {
                 let region = SIMD4<Int32>(Int32(columns.lowerBound), Int32(span.rows.lowerBound),
                                           Int32(columns.count), Int32(span.rows.count))
                 var gpu = GPUDab(center: center, params: params, color: dab.color,
-                                 options: SIMD4<Float>(spaceFlag, 0, 0, 0), region: region)
+                                 options: SIMD4<Float>(spaceFlag, lockFlag, 0, 0), region: region)
                 encoder.setBytes(&gpu, length: MemoryLayout<GPUDab>.stride, index: 0)
                 let groups = MTLSize(width: (columns.count + group.width - 1) / group.width,
                                      height: (span.rows.count + group.height - 1) / group.height, depth: 1)
@@ -127,6 +128,7 @@ public final class BrushEngine {
 
         uint2 p = uint2(x, y);
         float4 dst = layer.read(p);
+        float4 original = dst;
         float sa = a * dab.color.w;
         if (dab.params.w > 0.5) {
             dst *= 1.0 - sa;
@@ -143,6 +145,9 @@ public final class BrushEngine {
                 float3 mixed = (src * sa + below * (da * (1.0 - sa))) / outA;
                 dst = float4(toLinear3(mixed) * outA, outA);
             }
+        }
+        if (dab.options.y > 0.5) {
+            dst = (original.w > 0.0 && dst.w > 0.0) ? float4(dst.rgb / dst.w * original.w, original.w) : original;
         }
         layer.write(dst, p);
     }

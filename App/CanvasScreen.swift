@@ -26,11 +26,19 @@ final class CanvasSession {
     static let morphDuration = 0.6
     static let maxRecentColors = 10
 
-    private(set) var layer = TiledLayer(name: "Calque 1", width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
+    /// La pile est une classe : `layersVersion` signale ses changements à SwiftUI.
+    @ObservationIgnored private(set) var stack = LayerStack(width: CanvasSession.canvasWidth, height: CanvasSession.canvasWidth / 2)
     private(set) var history = UndoRedoManager()
+    private(set) var layersVersion = 0
+    private(set) var activeID = UUID()
+    private(set) var paintingMask = false
+    /// Calques garantis par la mémoire disponible au dernier contrôle (voir `MemoryBudget`).
+    private(set) var guaranteedLayers = LayerStack.maxLayers
+    var showLayers = false
+    @ObservationIgnored var structureBeforeEdit: [StackItem]?
 
     /// Créé par le coordinateur Metal (il faut le GPU).
-    @ObservationIgnored var canvas: LayerCanvas?
+    @ObservationIgnored var canvas: StackCanvas?
     @ObservationIgnored var device: (any MTLDevice)?
 
     // Fichier (voir ProjectFiles.swift)
@@ -160,9 +168,8 @@ final class CanvasSession {
 
     func strokeEnded() {
         guard let canvas, canvas.isStroking else { return }
-        let deltas = canvas.endStroke()
-        if !deltas.isEmpty {
-            history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: layer.id, deltas: deltas))
+        if let result = canvas.endStroke(), !result.deltas.isEmpty {
+            history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: result.layerID, deltas: result.deltas))
         }
         refreshHistory()
     }
@@ -176,29 +183,67 @@ final class CanvasSession {
 
     func undo() {
         strokeCancelled()
-        if let entry = try? history.undo(in: [layer]) { invalidate(entry) }
+        if let entry = try? history.undo(in: stack) { invalidate(entry) }
         refreshHistory()
     }
 
     func redo() {
         strokeCancelled()
-        if let entry = try? history.redo(in: [layer]) { invalidate(entry) }
+        if let entry = try? history.redo(in: stack) { invalidate(entry) }
         refreshHistory()
     }
 
     private func invalidate(_ entry: HistoryEntry) {
-        if entry.isSpilled { canvas?.invalidateAll() } else { canvas?.invalidate(entry.deltas.map(\.coord)) }
+        if entry.structure != nil || entry.isSpilled {
+            structureChanged()
+        } else {
+            canvas?.invalidate(entry.deltas.map(\.coord), layerID: entry.layerID)
+        }
     }
 
-    /// Remplace le calque (nouveau projet, ouverture) : nouvelle texture GPU, historique vidé.
-    func replaceLayer(_ newLayer: TiledLayer) {
+    /// Remplace la pile (nouveau projet, ouverture) : caches GPU reconstruits, historique vidé.
+    func replaceStack(_ newStack: LayerStack) {
         strokeCancelled()
-        layer = newLayer
+        stack = newStack
         history = UndoRedoManager()
-        let canvas = LayerCanvas(layer: newLayer, device: device)
-        canvas.blendSpace = blendSpace
-        self.canvas = canvas
+        if let canvas {
+            canvas.replaceStack(newStack)
+        } else {
+            canvas = StackCanvas(stack: newStack, device: device)
+        }
+        canvas?.blendSpace = blendSpace
+        activeID = canvas?.activeID ?? newStack.items.last { !$0.isGroup }!.id
+        paintingMask = false
         refreshHistory()
+        structureChanged()
+    }
+
+    /// Après tout changement de structure ou de propriété : calque actif valide, caches à refaire, interface à jour.
+    func structureChanged() {
+        if stack.item(activeID) == nil {
+            activeID = stack.items.last { !$0.isGroup }?.id ?? stack.items.last!.id
+        }
+        if stack.item(activeID)?.mask == nil { paintingMask = false }
+        canvas?.activeID = activeID
+        canvas?.paintingMask = paintingMask
+        canvas?.setNeedsRefresh()
+        if let available = MemoryBudgetManager.systemAvailableBytes() {
+            guaranteedLayers = stack.guaranteedLayers(availableBytes: available)
+        }
+        layersVersion += 1
+    }
+
+    func selectLayer(_ id: UUID) {
+        strokeCancelled()
+        activeID = id
+        paintingMask = false
+        structureChanged()
+    }
+
+    func setPaintingMask(_ value: Bool) {
+        strokeCancelled()
+        paintingMask = value && stack.item(activeID)?.mask != nil
+        structureChanged()
     }
 
     func refreshHistory() {
@@ -208,15 +253,16 @@ final class CanvasSession {
 
     // MARK: - Couleur
 
-    /// Pipette : couleur affichée sous le doigt (calque composé sur le papier blanc).
+    /// Pipette : couleur affichée sous le doigt (toute la pile composée sur le papier blanc).
     func pickColor(ndc: SIMD2<Double>, aspect: Double) {
         guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
-        let p = Equirect.pixel(from: d, width: layer.width, height: layer.height)
-        let x = min(layer.width - 1, max(0, Int(p.x)))
-        let y = min(layer.height - 1, max(0, Int(p.y)))
-        let px = layer.pixel(x: x, y: y)
-        let over = SIMD3<Float>(px.x, px.y, px.z) + SIMD3<Float>(repeating: 1 - px.w)
-        let encoded = ColorTransfer.toEncoded(over)
+        let p = Equirect.pixel(from: d, width: stack.width, height: stack.height)
+        let x = min(stack.width - 1, max(0, Int(p.x)))
+        let y = min(stack.height - 1, max(0, Int(p.y)))
+        let coord = TileCoord.containing(x: x, y: y)
+        let tile = LayerCompositor.compositeTile(coord, stack: stack, paper: [1, 1, 1], space: blendSpace)
+        let px = tile[(y % TileSize.side) * TileSize.side + x % TileSize.side]
+        let encoded = ColorTransfer.toEncoded(SIMD3<Float>(px.x, px.y, px.z))
         color = [Double(min(1, max(0, encoded.x))), Double(min(1, max(0, encoded.y))), Double(min(1, max(0, encoded.z)))]
         tool = .brush
     }
@@ -290,26 +336,24 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         queue = device?.makeCommandQueue()
         renderer = device.flatMap { try? PanoramaRenderer(device: $0) }
         session.device = device
-        if session.canvas == nil {
-            let canvas = LayerCanvas(layer: session.layer, device: device)
-            canvas.blendSpace = session.blendSpace
-            session.canvas = canvas
-        }
+        if session.canvas == nil { session.replaceStack(session.stack) }
     }
 
     func render(in view: MTKView) {
         session.advance(now: CACurrentMediaTime())
-        guard let renderer, let queue, let canvas = session.canvas, let display = canvas.display,
+        guard let renderer, let queue, let canvas = session.canvas,
               let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let commands = queue.makeCommandBuffer() else { return }
         canvas.encodeFrame(into: commands)
+        guard let layers = canvas.panoramaLayers() else { return }
 
         let size = view.drawableSize
         let parameters = session.view.parameters(aspect: Double(size.width / max(size.height, 1)))
-        let uniforms = ViewUniforms(parameters, viewportHeight: Int(size.height), textureHeight: display.texture.height,
+        var uniforms = ViewUniforms(parameters, viewportHeight: Int(size.height), textureHeight: layers.below.height,
                                     exposure: session.exposure, toneMapping: session.toneMapping)
+        canvas.configure(&uniforms)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
-        try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, panorama: display.texture, uniforms: uniforms)
+        try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()
         commands.present(drawable)
         commands.commit()
@@ -505,6 +549,7 @@ struct CanvasToolbar: View {
             HStack(spacing: 14) {
                 FileMenu(session: session)
                     .fixedSize()
+                LayersButton(session: session)
 
                 Picker("Vue", selection: Binding(get: { session.mode }, set: { session.setMode($0) })) {
                     ForEach(ViewMode.allCases, id: \.self) { Text($0.label).tag($0) }
