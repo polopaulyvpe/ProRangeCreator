@@ -151,8 +151,11 @@ struct ToolOptions: View {
             Menu("Pression") {
                 Toggle("Pression → taille", isOn: $session.settings.pressureAffectsSize)
                 Toggle("Pression → opacité", isOn: $session.settings.pressureAffectsOpacity)
+                Toggle("QuickShape (tracer puis maintenir)", isOn: $session.quickShapeEnabled)
             }
             .fixedSize()
+        case .liquify:
+            LiquifyOptions(session: session)
         case .smudge:
             labeledSlider("Force", value: $session.smudgeStrength, range: 0.05...1)
         case .clone:
@@ -209,6 +212,10 @@ struct SphereToolsMenus: View {
             Label("Guides", systemImage: "globe.europe.africa")
         }
         .fixedSize()
+
+        Button("Texte", systemImage: "textformat") { session.showTextSheet = true }
+            .labelStyle(.iconOnly)
+            .sheet(isPresented: $session.showTextSheet) { TextSheet(session: session) }
 
         Button("Tourner la sphère", systemImage: "rotate.3d") { session.showRotation = true }
             .labelStyle(.iconOnly)

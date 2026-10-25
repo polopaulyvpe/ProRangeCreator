@@ -2,7 +2,7 @@ import Metal
 import simd
 import PRCore
 
-/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : treize `float4`).
+/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : vingt-quatre `float4`).
 public struct ViewUniforms {
     public var rot0: SIMD4<Float>
     public var rot1: SIMD4<Float>
@@ -29,6 +29,9 @@ public struct ViewUniforms {
     public var tMoveInv1: SIMD4<Float> = .zero
     public var tMoveInv2: SIMD4<Float> = .zero
     public var tParams: SIMD4<Float> = .zero
+    public var tH0: SIMD4<Float> = .zero
+    public var tH1: SIMD4<Float> = .zero
+    public var tH2: SIMD4<Float> = .zero
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
                 exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
@@ -72,6 +75,24 @@ public struct ViewUniforms {
         tMoveInv2 = vector(inverse.columns.2)
         tParams = [Float(cos(transform.angle)), Float(sin(transform.angle)),
                    Float(1 / transform.scale.x), Float(1 / transform.scale.y)]
+    }
+
+    /// Aperçu d'une distorsion par quatre coins du contenu flottant.
+    public mutating func setSelection(visible: Bool, distort: SphericalDistort) {
+        func vector(_ v: SIMD3<Double>) -> SIMD4<Float> { [Float(v.x), Float(v.y), Float(v.z), 0] }
+        guard let homography = distort.homography else {
+            selection = [visible ? 1 : 0, 0, 0, 0]
+            return
+        }
+        selection = [visible ? 1 : 0, 1, 1, 0]
+        let frame = distort.frame
+        tCenter = vector(frame.center)
+        tEast = vector(frame.east)
+        tNorth = vector(frame.north)
+        let inverse = homography.inverse.matrix
+        tH0 = vector(inverse.columns.0)
+        tH1 = vector(inverse.columns.1)
+        tH2 = vector(inverse.columns.2)
     }
 
     public mutating func setGuides(enabled: Bool, spacingDegrees: Double = 15, opacity: Double = 0.45) {

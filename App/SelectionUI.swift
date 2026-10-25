@@ -244,7 +244,10 @@ struct SelectionOptions: View {
         .fixedSize()
 
         Button("Transformer", systemImage: "arrow.up.and.down.and.arrow.left.and.right") { session.startTransform() }
-            .disabled(session.transform != nil)
+            .disabled(session.transform != nil || session.distort != nil)
+            .fixedSize()
+        Button("Distorsion", systemImage: "skew") { session.startDistort() }
+            .disabled(session.transform != nil || session.distort != nil)
             .fixedSize()
     }
 }

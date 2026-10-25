@@ -150,6 +150,15 @@ public final class SelectionMask {
 
     /// Applique une transformation à la sélection elle-même (elle suit le contenu déplacé).
     public func transform(_ t: SphericalTransform) {
+        warp { t.inverse($0) }
+    }
+
+    public func distort(_ d: SphericalDistort) {
+        warp { d.inverse($0) }
+    }
+
+    /// Déformation de la sélection par mapping inverse (nil = rien de sélectionné à cet endroit).
+    public func warp(_ inverse: (Vec3) -> Vec3?) {
         let snapshot = LayerSampler(layer.duplicate())
         let geometry = layer.geometry
         for coord in allTiles {
@@ -157,8 +166,8 @@ public final class SelectionMask {
             var any = false
             for y in 0..<TileSize.side {
                 for x in 0..<TileSize.side {
-                    let v = snapshot.sample(direction: t.inverse(geometry.direction(x: coord.x * TileSize.side + x,
-                                                                                   y: coord.y * TileSize.side + y))).w
+                    let d = geometry.direction(x: coord.x * TileSize.side + x, y: coord.y * TileSize.side + y)
+                    let v = inverse(d).map { snapshot.sample(direction: $0).w } ?? 0
                     values[y * TileSize.side + x] = v
                     if v > 0 { any = true }
                 }
@@ -184,6 +193,22 @@ public final class SelectionMask {
             }
         }
         return simd_length(sum) > 1e-9 ? simd_normalize(sum) : nil
+    }
+
+    /// Plus grande distance angulaire entre `center` et un pixel sélectionné (échantillonnée) : taille d'une poignée de distorsion.
+    public func angularRadius(around center: Vec3) -> Double? {
+        var radius = 0.0
+        let geometry = layer.geometry
+        for coord in layer.storedTiles {
+            guard let values = tileValues(coord) else { continue }
+            for y in stride(from: 0, to: TileSize.side, by: 8) {
+                for x in stride(from: 0, to: TileSize.side, by: 8) where values[y * TileSize.side + x] > 0.5 {
+                    let d = geometry.direction(x: coord.x * TileSize.side + x, y: coord.y * TileSize.side + y)
+                    radius = max(radius, Sphere.angle(center, d))
+                }
+            }
+        }
+        return radius > 0 ? radius : nil
     }
 
     // MARK: - Interne
@@ -257,6 +282,19 @@ extension TiledLayer {
     /// Le contenu déplacé est posé par-dessus ce qui reste. Renvoie les tuiles modifiées.
     @discardableResult
     public func applyTransform(_ transform: SphericalTransform, selection: SelectionMask?) -> Set<TileCoord> {
+        applyWarp(selection: selection) { transform.inverse($0) }
+    }
+
+    /// Distorsion par quatre coins du contenu sélectionné (tout le calque sans sélection).
+    @discardableResult
+    public func applyDistort(_ distort: SphericalDistort, selection: SelectionMask?) -> Set<TileCoord> {
+        applyWarp(selection: selection) { distort.inverse($0) }
+    }
+
+    /// Déformation générique par mapping inverse : `inverse` donne la direction source d'une direction de destination
+    /// (nil = rien n'y arrive). Le contenu sélectionné est retiré, déformé et reposé par-dessus le reste.
+    @discardableResult
+    public func applyWarp(selection: SelectionMask?, inverse: @escaping (Vec3) -> Vec3?) -> Set<TileCoord> {
         let snapshot = duplicate()
         let selectionSnapshot = selection?.layer.duplicate()
         let geometry = geometry
@@ -278,8 +316,10 @@ extension TiledLayer {
                             guard gx < width, gy < height else { continue }
                             let here = source.texel(gx, gy)
                             let keep = 1 - (mask?.texel(gx, gy).w ?? 1)
-                            let from = transform.inverse(geometry.direction(x: gx, y: gy))
-                            let moved = source.sample(direction: from) * (mask?.sample(direction: from).w ?? 1)
+                            var moved = SIMD4<Float>.zero
+                            if let from = inverse(geometry.direction(x: gx, y: gy)) {
+                                moved = source.sample(direction: from) * (mask?.sample(direction: from).w ?? 1)
+                            }
                             let value = moved + here * keep * (1 - moved.w)
                             pixels[y * TileSize.side + x] = value
                             if value != here { changed = true }

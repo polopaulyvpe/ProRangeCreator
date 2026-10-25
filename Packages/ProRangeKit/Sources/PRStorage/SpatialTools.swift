@@ -167,7 +167,7 @@ extension TiledLayer {
     public func smudge(_ dab: SphericalDab, from previous: Vec3, strength: Float) -> Set<TileCoord> {
         let back = Sphere.rotation(from: dab.center, to: previous)
         let sampler = LayerSampler(self)
-        return transfer(dab) { d in sampler.sample(direction: back * d) } blend: { dst, src, a in
+        return transfer(dab, coverageSource: { d, _ in sampler.sample(direction: back * d) }) { dst, src, a in
             dst + (src - dst) * (a * strength)
         }
     }
@@ -175,14 +175,98 @@ extension TiledLayer {
     /// Clonage : chaque texel du dab reçoit la couleur de `source` lue à travers `rotation` (direction peinte → direction source).
     @discardableResult
     public func clone(_ dab: SphericalDab, from source: LayerSampler, rotation: simd_double3x3) -> Set<TileCoord> {
-        transfer(dab) { d in source.sample(direction: rotation * d) } blend: { dst, src, a in
+        transfer(dab, coverageSource: { d, _ in source.sample(direction: rotation * d) }) { dst, src, a in
             let sa = a * dab.color.w
             return src * sa + dst * (1 - sa)
         }
     }
 
+    // MARK: - Liquify
+
+    /// Déforme localement les pixels sous le dab (lit l'état courant, donc les déformations s'accumulent le long du trait).
+    /// La couverture du dab (dureté comprise) sert de fondu : aucun déplacement au bord, donc pas de couture visible.
+    @discardableResult
+    public func liquify(_ dab: SphericalDab, mode: LiquifyMode, from previous: Vec3, strength: Float) -> Set<TileCoord> {
+        let sampler = LayerSampler(self)
+        let center = dab.center
+        let frame = TangentFrame(center: center)
+        let stepAxis = simd_cross(center, previous)
+        let stepAngle = Sphere.angle(center, previous)
+        let k = Double(strength)
+        return transfer(dab, map: { d, a in
+            let w = Double(a) * k
+            switch mode {
+            case .push:
+                // Le contenu est poussé dans le sens du trait : on lit en arrière, vers le dab précédent.
+                guard simd_length(stepAxis) > 1e-12 else { return d }
+                return simd_double3x3(simd_quatd(angle: stepAngle * w, axis: simd_normalize(stepAxis))) * d
+            case .twirl:
+                return simd_double3x3(simd_quatd(angle: 0.5 * w, axis: center)) * d
+            case .pinch:
+                return frame.unproject(frame.project(d) * (1 + 0.5 * w))
+            case .expand:
+                return frame.unproject(frame.project(d) * (1 - 0.5 * w))
+            }
+        }, sampler: sampler)
+    }
+
+    /// Variante de `transfer` pour les déformations : le texel prend la valeur lue à la direction source donnée par `map`.
+    private func transfer(_ dab: SphericalDab, map: (Vec3, Float) -> Vec3, sampler: LayerSampler) -> Set<TileCoord> {
+        transfer(dab, coverageSource: { d, a in sampler.sample(direction: map(d, a)) }) { _, src, _ in src }
+    }
+
+    // MARK: - Pose d'une image (texte, image plate)
+
+    /// Pose une image plate (RGBA linéaire prémultiplié, lignes de haut en bas) comme une photo tenue face à `center` :
+    /// projection rectiligne, largeur angulaire `angularWidth`, rotation `roll` dans le plan. Composée par-dessus le calque.
+    @discardableResult
+    public func placeImage(_ pixels: [SIMD4<Float>], width imageWidth: Int, height imageHeight: Int,
+                           center: Vec3, angularWidth: Double, roll: Double = 0) -> Set<TileCoord> {
+        let frame = TangentFrame(center: center)
+        let halfW = tan(min(angularWidth, 2.8) / 2)
+        let halfH = halfW * Double(imageHeight) / Double(imageWidth)
+        let reach = atan((halfW * halfW + halfH * halfH).squareRoot()) + geometry.pixelAngle
+        let span = EquirectSpan(center: frame.center, radius: reach, width: width, height: height)
+        func image(_ x: Int, _ y: Int) -> SIMD4<Float> {
+            pixels[min(imageHeight - 1, max(0, y)) * imageWidth + min(imageWidth - 1, max(0, x))]
+        }
+        var updates: [TileCoord: [(index: Int, value: SIMD4<Float>)]] = [:]
+        let reader = LayerSampler(self)
+        for y in span.rows {
+            for columns in span.columns {
+                for x in columns {
+                    guard let g = frame.gnomonic(geometry.direction(x: x, y: y)) else { continue }
+                    let gx = g.x * cos(-roll) - g.y * sin(-roll)
+                    let gy = g.x * sin(-roll) + g.y * cos(-roll)
+                    let u = (gx / halfW + 1) / 2 * Double(imageWidth) - 0.5
+                    let v = (1 - gy / halfH) / 2 * Double(imageHeight) - 0.5
+                    guard u > -1, v > -1, u < Double(imageWidth), v < Double(imageHeight) else { continue }
+                    let x0 = Int(floor(u)), y0 = Int(floor(v))
+                    let tx = Float(u - Double(x0)), ty = Float(v - Double(y0))
+                    // Hors de l'image : transparent (bord antialiasé).
+                    func at(_ ix: Int, _ iy: Int) -> SIMD4<Float> {
+                        (ix < 0 || iy < 0 || ix >= imageWidth || iy >= imageHeight) ? .zero : image(ix, iy)
+                    }
+                    let top = at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx
+                    let bottom = at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx
+                    let src = top * (1 - ty) + bottom * ty
+                    guard src.w > 0 else { continue }
+                    let dst = reader.texel(x, y)
+                    let coord = TileCoord.containing(x: x, y: y)
+                    updates[coord, default: []].append(((y % TileSize.side) * TileSize.side + x % TileSize.side, src + dst * (1 - src.w)))
+                }
+            }
+        }
+        for (coord, changes) in updates {
+            var tile = tileFloatPixels(coord)
+            for change in changes { tile[change.index] = change.value }
+            replaceTile(coord, withPixels: tile)
+        }
+        return Set(updates.keys)
+    }
+
     /// Calcule d'abord toutes les nouvelles valeurs (lecture), puis écrit : un dab ne lit jamais ce qu'il vient d'écrire.
-    private func transfer(_ dab: SphericalDab, source: (Vec3) -> SIMD4<Float>,
+    private func transfer(_ dab: SphericalDab, coverageSource source: (Vec3, Float) -> SIMD4<Float>,
                           blend: (SIMD4<Float>, SIMD4<Float>, Float) -> SIMD4<Float>) -> Set<TileCoord> {
         let evaluator = DabEvaluator(dab, pixelAngle: geometry.pixelAngle)
         let span = evaluator.span(in: geometry)
@@ -195,7 +279,7 @@ extension TiledLayer {
                     let a = evaluator.coverage(at: d)
                     guard a > 0 else { continue }
                     let dst = reader.texel(x, y)
-                    let value = blend(dst, source(d), a)
+                    let value = blend(dst, source(d, a), a)
                     let coord = TileCoord.containing(x: x, y: y)
                     updates[coord, default: []].append(((y % TileSize.side) * TileSize.side + x % TileSize.side, value))
                 }

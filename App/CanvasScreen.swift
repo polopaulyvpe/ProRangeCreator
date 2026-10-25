@@ -14,6 +14,7 @@ enum PaintTool: String, CaseIterable {
     case fill
     case gradient
     case select
+    case liquify
 
     var label: String {
         switch self {
@@ -24,6 +25,7 @@ enum PaintTool: String, CaseIterable {
         case .fill: "Remplissage"
         case .gradient: "Dégradé"
         case .select: "Sélection"
+        case .liquify: "Liquify"
         }
     }
 
@@ -36,11 +38,12 @@ enum PaintTool: String, CaseIterable {
         case .fill: "drop"
         case .gradient: "circle.lefthalf.striped.horizontal"
         case .select: "lasso"
+        case .liquify: "tornado"
         }
     }
 
     /// Outils qui lisent les pixels pendant le trait : chemin CPU.
-    var needsCPU: Bool { self == .smudge || self == .clone }
+    var needsCPU: Bool { self == .smudge || self == .clone || self == .liquify }
 }
 
 /// État de l'écran Toile : un calque, l'historique, la vue, les outils et l'affichage.
@@ -123,6 +126,19 @@ final class CanvasSession {
     /// Tracé en cours, en NDC (affiché par-dessus la toile).
     var selectionDrag: [SIMD2<Double>] = []
     var transform: SphericalTransform?
+
+    // Lot C (voir DeformationUI.swift)
+    var liquifyMode: LiquifyMode = .push
+    var liquifyStrength = 0.6
+    var quickShapeEnabled = true
+    var distort: SphericalDistort?
+    var showTextSheet = false
+    @ObservationIgnored var activeCorner: Int?
+    @ObservationIgnored var quickShapePoints: [Vec3] = []
+    @ObservationIgnored var quickShapePressure = 1.0
+    @ObservationIgnored var quickShapeLastMove: CFTimeInterval = 0
+    @ObservationIgnored var quickShapeTimer: Timer?
+    @ObservationIgnored var quickShapeApplied = false
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
@@ -211,6 +227,10 @@ final class CanvasSession {
         lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
+        if distort != nil {
+            grabDistortCorner(ndc: ndc)
+            return
+        }
         if transform != nil {
             moveTransform(to: d)
             return
@@ -238,13 +258,14 @@ final class CanvasSession {
         if tool == .brush { rememberColor() }
         let centers = sampler.begin(at: d)
         switch tool {
-        case .smudge:
+        case .smudge, .liquify:
             smudgePrevious = symmetry.images(of: d)
         case .clone:
             beginClone(at: d)
             applyClone(centers, pressure: pressure)
         default:
             canvas.add(symmetricDabs(centers, pressure: pressure))
+            beginQuickShapeWatch(at: d, pressure: pressure)
         }
     }
 
@@ -256,26 +277,38 @@ final class CanvasSession {
         }
         guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
+        if distort != nil {
+            moveDistortCorner(to: d)
+            return
+        }
         if transform != nil {
             moveTransform(to: d)
             return
         }
-        guard let canvas, canvas.isStroking else { return }
+        guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
         let spacing = max(settings.radius(pressure: pressure) * settings.spacing, 1e-4)
         let centers = sampler.add(d, spacing: spacing)
         switch tool {
         case .smudge: applySmudge(centers, pressure: pressure)
+        case .liquify: applyLiquify(centers, pressure: pressure)
         case .clone: applyClone(centers, pressure: pressure)
-        default: canvas.add(symmetricDabs(centers, pressure: pressure))
+        default:
+            canvas.add(symmetricDabs(centers, pressure: pressure))
+            noteQuickShapePoint(d)
         }
     }
 
     /// Dabs du trait et leurs copies par symétrie.
-    private func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
+    func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
         centers.flatMap { symmetry.images(of: $0) }.map { dab(at: $0, pressure: pressure) }
     }
 
     func strokeEnded() {
+        stopQuickShapeWatch()
+        if distort != nil {
+            activeCorner = nil
+            return
+        }
         if transform != nil { return }
         if tool == .select {
             selectionEnded()
@@ -303,6 +336,7 @@ final class CanvasSession {
     func undo() {
         strokeCancelled()
         cancelTransform()
+        cancelDistort()
         if let entry = try? history.undo(in: historyTarget) { invalidate(entry) }
         refreshHistory()
     }
@@ -310,6 +344,7 @@ final class CanvasSession {
     func redo() {
         strokeCancelled()
         cancelTransform()
+        cancelDistort()
         if let entry = try? history.redo(in: historyTarget) { invalidate(entry) }
         refreshHistory()
     }
@@ -480,7 +515,11 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         canvas.configure(&uniforms)
         uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
         uniforms.setGuides(enabled: session.guidesEnabled, spacingDegrees: session.guideSpacing)
-        uniforms.setSelection(visible: session.hasSelection, transform: session.transform)
+        if let distort = session.distort {
+            uniforms.setSelection(visible: session.hasSelection, distort: distort)
+        } else {
+            uniforms.setSelection(visible: session.hasSelection, transform: session.transform)
+        }
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()
@@ -616,9 +655,13 @@ struct CanvasScreen: View {
             SelectionDragOverlay(session: session)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
+            DistortHandlesOverlay(session: session)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             VStack(alignment: .leading, spacing: 12) {
                 CanvasToolbar(session: session)
                 TransformPanel(session: session)
+                DistortPanel(session: session)
                 SideControls(session: session)
             }
             .padding(12)

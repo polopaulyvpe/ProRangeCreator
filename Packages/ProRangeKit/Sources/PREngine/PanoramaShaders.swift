@@ -30,6 +30,9 @@ enum PanoramaShaders {
         float4 tMoveInv1;
         float4 tMoveInv2;
         float4 tParams;     // cos(angle), sin(angle), 1/échelle x, 1/échelle y
+        float4 tH0;         // distorsion : homographie inverse (colonnes), plan gnomonique en tCenter
+        float4 tH1;
+        float4 tH2;
     };
 
     struct VOut {
@@ -261,22 +264,39 @@ enum PanoramaShaders {
         float4 floating = float4(0.0);
         if (u.selection.y > 0.5) {
             float3 d = directionFromUV(uv);
-            float3 e = u.tMoveInv0.xyz * d.x + u.tMoveInv1.xyz * d.y + u.tMoveInv2.xyz * d.z;
             float3 o = u.tCenter.xyz;
-            float cosA = dot(o, e);
-            float3 t = e - o * cosA;
-            float sinA = length(t);
-            float2 p = float2(0.0);
-            if (sinA > 1e-7) { p = float2(dot(t, u.tEast.xyz), dot(t, u.tNorth.xyz)) * (atan2(sinA, cosA) / sinA); }
-            float cs = u.tParams.x;
-            float sn = u.tParams.y;
-            float2 q = float2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs) * u.tParams.zw;
-            float a = length(q);
             float3 src = o;
-            if (a > 1e-7) { src = o * cos(a) + (u.tEast.xyz * q.x + u.tNorth.xyz * q.y) / a * sin(a); }
-            float2 suv = uvFromDirection(src);
-            floating = floatingTex.sample(s, suv, level(lod));
-            if (u.selection.x > 0.5) { selectionValue = selectionTex.sample(s, suv, level(lod)).a; }
+            bool valid = true;
+            if (u.selection.z > 0.5) {
+                // Distorsion (PRCore.SphericalDistort.inverse) : plan gnomonique, homographie inverse.
+                float z = dot(d, o);
+                valid = z > 1e-4;
+                if (valid) {
+                    float2 g = float2(dot(d, u.tEast.xyz), dot(d, u.tNorth.xyz)) / z;
+                    float3 h = u.tH0.xyz * g.x + u.tH1.xyz * g.y + u.tH2.xyz;
+                    valid = abs(h.z) > 1e-9;
+                    if (valid) { src = normalize(o + u.tEast.xyz * (h.x / h.z) + u.tNorth.xyz * (h.y / h.z)); }
+                }
+            } else {
+                float3 e = u.tMoveInv0.xyz * d.x + u.tMoveInv1.xyz * d.y + u.tMoveInv2.xyz * d.z;
+                float cosA = dot(o, e);
+                float3 t = e - o * cosA;
+                float sinA = length(t);
+                float2 p = float2(0.0);
+                if (sinA > 1e-7) { p = float2(dot(t, u.tEast.xyz), dot(t, u.tNorth.xyz)) * (atan2(sinA, cosA) / sinA); }
+                float cs = u.tParams.x;
+                float sn = u.tParams.y;
+                float2 q = float2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs) * u.tParams.zw;
+                float a = length(q);
+                if (a > 1e-7) { src = o * cos(a) + (u.tEast.xyz * q.x + u.tNorth.xyz * q.y) / a * sin(a); }
+            }
+            if (valid) {
+                float2 suv = uvFromDirection(src);
+                floating = floatingTex.sample(s, suv, level(lod));
+                if (u.selection.x > 0.5) { selectionValue = selectionTex.sample(s, suv, level(lod)).a; }
+            } else if (u.selection.x > 0.5) {
+                selectionValue = 0.0;
+            }
         } else if (u.selection.x > 0.5) {
             selectionValue = selectionTex.sample(s, uv, level(lod)).a;
         }
