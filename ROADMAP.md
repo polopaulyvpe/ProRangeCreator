@@ -4,7 +4,7 @@
 |---|---|---|
 | 0 | Cadrage, squelette, CI, docs (D1, D7, D8) | ✅ fait, CI verte |
 | 1 | Spike : projection et pinceau sphérique (CPU), mesure mémoire 16K | 🟡 15 tests verts sur CI, mesures sur l’iPad en attente |
-| 1 | Fondations : tuiles éparses, format de projet, journal (D2, D3) | 🟡 tuiles 256², historique par deltas, paquet `.prrange` faits ; reste le déversement disque des tuiles et le gestionnaire de budget mémoire |
+| 1 | Fondations : tuiles éparses, format de projet, journal, déversement disque, budget mémoire (D2, D3) | ✅ CI verte ; mesures mémoire sur l'iPad en attente (installation bloquée côté Apple) |
 | 2 | Visualisation : sphère, dépliage, fenêtre plane, LOD, tone mapping (D5, D12) | ⏳ |
 | 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | ⏳ |
 | — | **MVP** = phases 0 à 3 + export EXR/HDR simple | ⏳ |

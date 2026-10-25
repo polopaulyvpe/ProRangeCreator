@@ -61,7 +61,24 @@ Le kernel Metal (phase 3) reprendra exactement ce calcul, et sera testé contre 
 
 - `perform(name, on: layer) { … }` encadre une opération : `beginOperation` mémorise l'état d'avant (`TileState`) de chaque tuile au premier contact, `endOperation` produit les `TileDelta` (avant/après) des seules tuiles réellement changées.
 - Annuler applique les états « avant », rétablir les états « après » : c'est exact au bit près, sans rejouer de trait.
-- Plafond par défaut de 1 000 pas. Une nouvelle opération efface la branche à rétablir. Le débordement sur disque viendra avec le gestionnaire de budget mémoire.
+- Plafond par défaut de 1 000 pas. Une nouvelle opération efface la branche à rétablir.
+- `spill(keepingRecent:)` écrit sur disque les entrées éloignées de l'état courant, en encodage binaire des deltas. Annuler ou rétablir les relit au besoin, et leurs fichiers sont supprimés quand les entrées disparaissent.
+
+### Déversement et budget mémoire (`MemoryBudgetManager`)
+
+- Une tuile peut être **déversée** : compressée dans le `spillStore` du calque, elle n'occupe plus rien en mémoire. La lecture et l'écriture la rechargent de façon transparente, et l'écriture supprime son fichier.
+- La pression se lit sur `os_proc_available_memory` sous iPadOS ; ailleurs, sur un plafond de mémoire résidente :
+
+  | Pression | Seuil par défaut | Action |
+  |---|---|---|
+  | normale | plus de 1 Gio disponible | aucune |
+  | élevée | moins de 1 Gio | recompression en mémoire des tuiles hors zone de travail |
+  | critique | moins de 512 Mio | déversement des tuiles inactives de tous les calques et de l'historique ancien (20 entrées gardées autour de l'état courant) |
+
+- Si la pression reste critique après ces actions, `MemoryReport.suggestMergingLayers` le signale, et l'interface doit avertir et proposer de fusionner des calques. On ne plante jamais en silence.
+- Les tuiles de la zone de travail du calque actif ne sont jamais déversées.
+- Une tuile déversée illisible arrête l'app avec un message explicite, plutôt que de laisser peindre sur des pixels perdus.
+- L'app devra appeler `relieve` régulièrement et sur l'avertissement mémoire du système. Ce branchement arrive avec le moteur, en phases 2 et 3.
 
 ### Paquet de projet `.prrange`
 

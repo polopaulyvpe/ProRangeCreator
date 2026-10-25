@@ -28,6 +28,8 @@ gh run view --log-failed
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
 | `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |
+| `SpillTests` | Tuiles déversées relues à l'identique ; peindre dessus, annuler et rétablir restent exacts ; `unspillAll` ne laisse aucun fichier ; un calque déversé se sauvegarde normalement ; historique déversé exact au bit près ; fichiers d'historique supprimés avec les entrées |
+| `MemoryBudgetManagerTests` | Mémoire suffisante : rien ne bouge ; pression critique : déversement sauf la zone de travail, contenu intact, conseil de fusion, purge ; mémoire inconnue : plafond résident et simple recompression |
 
 ## Mesures sur l'appareil
 
