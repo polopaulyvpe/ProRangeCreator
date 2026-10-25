@@ -15,6 +15,13 @@ public struct HistoryEntry: Sendable {
     public internal(set) var deltas: [TileDelta]
     public internal(set) var spillURL: URL?
 
+    public init(name: String, layerID: UUID, deltas: [TileDelta]) {
+        self.name = name
+        self.layerID = layerID
+        self.deltas = deltas
+        spillURL = nil
+    }
+
     /// Octets occupés en mémoire.
     public var byteSize: Int { deltas.reduce(0) { $0 + $1.before.byteSize + $1.after.byteSize } }
     public var isSpilled: Bool { spillURL != nil }
@@ -52,7 +59,7 @@ public final class UndoRedoManager {
         body()
         let deltas = layer.endOperation()
         guard !deltas.isEmpty else { return nil }
-        let entry = HistoryEntry(name: name, layerID: layer.id, deltas: deltas, spillURL: nil)
+        let entry = HistoryEntry(name: name, layerID: layer.id, deltas: deltas)
         record(entry)
         return entry
     }

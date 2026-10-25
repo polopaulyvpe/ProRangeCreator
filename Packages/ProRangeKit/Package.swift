@@ -25,5 +25,6 @@ let package = Package(
 
         .testTarget(name: "PRCoreTests", dependencies: ["PRCore"]),
         .testTarget(name: "PRStorageTests", dependencies: ["PRCore", "PRStorage"]),
+        .testTarget(name: "PREngineTests", dependencies: ["PRCore", "PRStorage", "PREngine"]),
     ]
 )

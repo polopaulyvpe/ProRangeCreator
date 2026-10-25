@@ -94,6 +94,18 @@ public final class TiledLayer {
         }
     }
 
+    /// Vrai si la tuile existe (sinon elle est transparente).
+    public func isStored(_ coord: TileCoord) -> Bool { tiles[coord] != nil }
+
+    /// Pixels d'une tuile décodés en RGBA linéaire prémultiplié (ligne par ligne, `TileSize.side` de large).
+    public func tileFloatPixels(_ coord: TileCoord) -> [SIMD4<Float>] {
+        let bytes = tileBytes(coord)
+        let format = format
+        return bytes.withUnsafeBytes { raw in
+            (0..<TileSize.pixelCount).map { Self.read(raw.baseAddress!, $0, format) }
+        }
+    }
+
     /// État sérialisable d'une tuile.
     public func state(of coord: TileCoord) -> TileState {
         switch tiles[coord] {

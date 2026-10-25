@@ -14,8 +14,10 @@ struct ProRangeCreatorApp: App {
 struct SpikeRootView: View {
     var body: some View {
         TabView {
+            CanvasScreen()
+                .tabItem { Label("Toile", systemImage: "globe") }
             SpikeCanvasView()
-                .tabItem { Label("Pinceau", systemImage: "paintbrush.pointed") }
+                .tabItem { Label("Pinceau 2D", systemImage: "paintbrush.pointed") }
             MemorySpikeView()
                 .tabItem { Label("Mémoire", systemImage: "memorychip") }
         }
