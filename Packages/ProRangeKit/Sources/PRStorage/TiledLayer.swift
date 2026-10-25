@@ -166,9 +166,11 @@ public final class TiledLayer {
 
     // MARK: - Écriture
 
-    /// Peint un dab sphérique. Renvoie les tuiles modifiées.
+    /// Peint un dab sphérique. `selection` (valeurs par tuile, nil = rien de sélectionné) limite la couverture.
+    /// Renvoie les tuiles modifiées.
     @discardableResult
-    public func stamp(_ dab: SphericalDab, space: BlendSpace = .perceptual, alphaLock: Bool = false) -> Set<TileCoord> {
+    public func stamp(_ dab: SphericalDab, space: BlendSpace = .perceptual, alphaLock: Bool = false,
+                      selection: ((TileCoord) -> [Float]?)? = nil) -> Set<TileCoord> {
         let evaluator = DabEvaluator(dab, pixelAngle: geometry.pixelAngle)
         let span = evaluator.span(in: geometry)
         let side = TileSize.side
@@ -179,7 +181,14 @@ public final class TiledLayer {
                     let xs = max(columns.lowerBound, tx * side)...min(columns.upperBound, tx * side + side - 1)
                     let ys = max(span.rows.lowerBound, ty * side)...min(span.rows.upperBound, ty * side + side - 1)
                     let coord = TileCoord(x: tx, y: ty)
-                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator, space: space, alphaLock: alphaLock) { touched.insert(coord) }
+                    var mask: [Float]?
+                    if let selection {
+                        guard let values = selection(coord) else { continue }
+                        mask = values
+                    }
+                    if stampTile(coord, xs: xs, ys: ys, evaluator: evaluator, space: space, alphaLock: alphaLock, mask: mask) {
+                        touched.insert(coord)
+                    }
                 }
             }
         }
@@ -245,6 +254,23 @@ public final class TiledLayer {
             .sorted { ($0.coord.y, $0.coord.x) < ($1.coord.y, $1.coord.x) }
     }
 
+    /// État d'une tuile au début de l'opération en cours (nil si elle n'a pas été touchée).
+    func beforeState(of coord: TileCoord) -> TileState? {
+        recording?[coord]
+    }
+
+    /// Pixels RGBA linéaires d'un état de tuile.
+    func decode(_ state: TileState) -> [SIMD4<Float>] {
+        let bytes: [UInt8]
+        switch state {
+        case .absent: return [SIMD4<Float>](repeating: .zero, count: TileSize.pixelCount)
+        case .uniform(let d): bytes = Self.repeated(d)
+        case .packed(let d): bytes = Self.unpack(d, format: format)
+        }
+        let format = format
+        return bytes.withUnsafeBytes { raw in (0..<TileSize.pixelCount).map { Self.read(raw.baseAddress!, $0, format) } }
+    }
+
     private func willModify(_ coord: TileCoord) {
         guard recording != nil, recording?[coord] == nil else { return }
         recording?[coord] = state(of: coord)
@@ -253,14 +279,16 @@ public final class TiledLayer {
     // MARK: - Tuiles
 
     private func stampTile(_ coord: TileCoord, xs: ClosedRange<Int>, ys: ClosedRange<Int>, evaluator: DabEvaluator,
-                           space: BlendSpace, alphaLock: Bool) -> Bool {
+                           space: BlendSpace, alphaLock: Bool, mask: [Float]?) -> Bool {
         // Couverture d'abord : une tuile que le dab ne touche pas n'est ni créée ni enregistrée.
         var coverage = [Float](repeating: 0, count: xs.count * ys.count)
         var any = false
         var i = 0
+        let side = TileSize.side
         for y in ys {
             for x in xs {
-                let a = evaluator.coverage(at: geometry.direction(x: x, y: y))
+                var a = evaluator.coverage(at: geometry.direction(x: x, y: y))
+                if let mask { a *= mask[(y - coord.y * side) * side + (x - coord.x * side)] }
                 coverage[i] = a
                 if a > 0 { any = true }
                 i += 1
@@ -268,7 +296,6 @@ public final class TiledLayer {
         }
         guard any else { return false }
 
-        let side = TileSize.side
         let format = format
         let dab = evaluator.dab
         var pixels = takePixels(coord)

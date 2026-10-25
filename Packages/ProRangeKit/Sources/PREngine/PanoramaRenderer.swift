@@ -20,6 +20,15 @@ public struct ViewUniforms {
     public var contentRot2: SIMD4<Float> = .zero
     /// Guides : actifs, espacement en degrés, opacité.
     public var guides: SIMD4<Float> = .zero
+    /// Sélection affichée, aperçu de transformation actif.
+    public var selection: SIMD4<Float> = .zero
+    public var tCenter: SIMD4<Float> = .zero
+    public var tEast: SIMD4<Float> = .zero
+    public var tNorth: SIMD4<Float> = .zero
+    public var tMoveInv0: SIMD4<Float> = .zero
+    public var tMoveInv1: SIMD4<Float> = .zero
+    public var tMoveInv2: SIMD4<Float> = .zero
+    public var tParams: SIMD4<Float> = .zero
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
                 exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
@@ -48,6 +57,23 @@ public struct ViewUniforms {
         contentRot2 = column(inverse.columns.2, 0)
     }
 
+    /// Sélection affichée (le reste est assombri) et aperçu de transformation du contenu flottant.
+    public mutating func setSelection(visible: Bool, transform: SphericalTransform?) {
+        selection = [visible ? 1 : 0, transform == nil ? 0 : 1, 0, 0]
+        guard let transform else { return }
+        func vector(_ v: SIMD3<Double>) -> SIMD4<Float> { [Float(v.x), Float(v.y), Float(v.z), 0] }
+        let frame = transform.frame
+        tCenter = vector(frame.center)
+        tEast = vector(frame.east)
+        tNorth = vector(frame.north)
+        let inverse = transform.move.transpose
+        tMoveInv0 = vector(inverse.columns.0)
+        tMoveInv1 = vector(inverse.columns.1)
+        tMoveInv2 = vector(inverse.columns.2)
+        tParams = [Float(cos(transform.angle)), Float(sin(transform.angle)),
+                   Float(1 / transform.scale.x), Float(1 / transform.scale.y)]
+    }
+
     public mutating func setGuides(enabled: Bool, spacingDegrees: Double = 15, opacity: Double = 0.45) {
         guides = [enabled ? 1 : 0, Float(spacingDegrees), Float(opacity), 0]
     }
@@ -63,6 +89,8 @@ public struct PanoramaLayers {
     public var below: any MTLTexture
     public var active: (any MTLTexture)?
     public var above: (any MTLTexture)?
+    public var selection: (any MTLTexture)?
+    public var floating: (any MTLTexture)?
 
     public init(below: any MTLTexture, active: (any MTLTexture)? = nil, above: (any MTLTexture)? = nil) {
         self.below = below
@@ -134,6 +162,8 @@ public final class PanoramaRenderer {
         encoder.setFragmentTexture(layers.below, index: 0)
         encoder.setFragmentTexture(layers.active ?? emptyTexture, index: 1)
         encoder.setFragmentTexture(layers.above ?? emptyTexture, index: 2)
+        encoder.setFragmentTexture(layers.selection ?? emptyTexture, index: 3)
+        encoder.setFragmentTexture(layers.floating ?? emptyTexture, index: 4)
         encoder.setFragmentSamplerState(filtering == .linear ? linearSampler : nearestSampler, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }

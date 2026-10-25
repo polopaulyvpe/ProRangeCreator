@@ -59,6 +59,13 @@ extension TiledLayer {
     /// Renvoie les tuiles modifiées (enregistrées dans l'opération en cours s'il y en a une).
     @discardableResult
     public func floodFill(from seed: Vec3, color: SIMD4<Float>, threshold: Float, space: BlendSpace) -> Set<TileCoord> {
+        let filled = floodMask(from: seed, threshold: threshold)
+        let dab = SphericalDab(center: [0, 0, -1], radius: 1, hardness: 1, color: color)
+        return applyMask(filled) { pixel in SphericalRasterizer.apply(dab, coverage: 1, to: &pixel, space: space) }
+    }
+
+    /// Zone connexe autour de `seed` (un booléen par pixel, ligne par ligne) : sert au remplissage et à la sélection automatique.
+    public func floodMask(from seed: Vec3, threshold: Float) -> [Bool] {
         let w = width, h = height
         let sampler = LayerSampler(self)
         let start = Equirect.pixel(from: seed, width: w, height: h)
@@ -110,9 +117,7 @@ extension TiledLayer {
                 cx = (cx + 1) % w
             }
         }
-
-        let dab = SphericalDab(center: [0, 0, -1], radius: 1, hardness: 1, color: color)
-        return applyMask(filled) { pixel in SphericalRasterizer.apply(dab, coverage: 1, to: &pixel, space: space) }
+        return filled
     }
 
     // MARK: - Dégradé

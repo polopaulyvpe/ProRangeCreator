@@ -22,6 +22,14 @@ enum PanoramaShaders {
         float4 contentRot1;
         float4 contentRot2;
         float4 guides;      // actifs, espacement (degrés), opacité, inutilisé
+        float4 selection;   // sélection affichée, aperçu de transformation actif
+        float4 tCenter;     // transformation : origine
+        float4 tEast;       // repère tangent en l'origine
+        float4 tNorth;
+        float4 tMoveInv0;   // inverse du déplacement, en colonnes
+        float4 tMoveInv1;
+        float4 tMoveInv2;
+        float4 tParams;     // cos(angle), sin(angle), 1/échelle x, 1/échelle y
     };
 
     struct VOut {
@@ -208,6 +216,8 @@ enum PanoramaShaders {
                                      texture2d<float> pano [[texture(0)]],
                                      texture2d<float> active [[texture(1)]],
                                      texture2d<float> above [[texture(2)]],
+                                     texture2d<float> selectionTex [[texture(3)]],
+                                     texture2d<float> floatingTex [[texture(4)]],
                                      sampler s [[sampler(0)]]) {
         float morph = u.unfolded.w;
         float2 flatUV = unfoldedUV(in.ndc, u);
@@ -245,13 +255,41 @@ enum PanoramaShaders {
             d = u.contentRot0.xyz * d.x + u.contentRot1.xyz * d.y + u.contentRot2.xyz * d.z;
             uv = uvFromDirection(d);
         }
+        // Sélection, et aperçu de transformation : la direction vue est ramenée à sa source par la transformation inverse
+        // (même calcul que PRCore.SphericalTransform.inverse).
+        float selectionValue = 1.0;
+        float4 floating = float4(0.0);
+        if (u.selection.y > 0.5) {
+            float3 d = directionFromUV(uv);
+            float3 e = u.tMoveInv0.xyz * d.x + u.tMoveInv1.xyz * d.y + u.tMoveInv2.xyz * d.z;
+            float3 o = u.tCenter.xyz;
+            float cosA = dot(o, e);
+            float3 t = e - o * cosA;
+            float sinA = length(t);
+            float2 p = float2(0.0);
+            if (sinA > 1e-7) { p = float2(dot(t, u.tEast.xyz), dot(t, u.tNorth.xyz)) * (atan2(sinA, cosA) / sinA); }
+            float cs = u.tParams.x;
+            float sn = u.tParams.y;
+            float2 q = float2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs) * u.tParams.zw;
+            float a = length(q);
+            float3 src = o;
+            if (a > 1e-7) { src = o * cos(a) + (u.tEast.xyz * q.x + u.tNorth.xyz * q.y) / a * sin(a); }
+            float2 suv = uvFromDirection(src);
+            floating = floatingTex.sample(s, suv, level(lod));
+            if (u.selection.x > 0.5) { selectionValue = selectionTex.sample(s, suv, level(lod)).a; }
+        } else if (u.selection.x > 0.5) {
+            selectionValue = selectionTex.sample(s, uv, level(lod)).a;
+        }
         bool perceptual = u.layer.w < 0.5;
         // Dessous (papier et calques inférieurs déjà composés), puis calque actif avec son mode, puis dessus (tout en Normal).
         float4 c = pano.sample(s, uv, level(lod));
         if (u.layer.x > 0.0) { c = compositeLayer(c, active.sample(s, uv, level(lod)), int(u.layer.y), u.layer.x, perceptual); }
         if (u.layer.z > 0.5) { c = compositeLayer(c, above.sample(s, uv, level(lod)), 0, 1.0, perceptual); }
         c.rgb += u.paper.rgb * (1.0 - c.a);
+        c.rgb = floating.rgb + c.rgb * (1.0 - floating.a);
         float3 shown = toneMap(c.rgb * exp2(u.display.x), int(u.display.y));
+        // Hors sélection : assombri.
+        if (u.selection.x > 0.5) { shown *= mix(0.5, 1.0, clamp(selectionValue, 0.0, 1.0)); }
         return float4(mix(shown, float3(0.2, 0.75, 1.0), guide), 1.0);
     }
     """

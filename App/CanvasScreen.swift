@@ -13,6 +13,7 @@ enum PaintTool: String, CaseIterable {
     case clone
     case fill
     case gradient
+    case select
 
     var label: String {
         switch self {
@@ -22,6 +23,7 @@ enum PaintTool: String, CaseIterable {
         case .clone: "Clonage"
         case .fill: "Remplissage"
         case .gradient: "Dégradé"
+        case .select: "Sélection"
         }
     }
 
@@ -33,6 +35,7 @@ enum PaintTool: String, CaseIterable {
         case .clone: "square.on.square.dashed"
         case .fill: "drop"
         case .gradient: "circle.lefthalf.striped.horizontal"
+        case .select: "lasso"
         }
     }
 
@@ -109,6 +112,17 @@ final class CanvasSession {
     @ObservationIgnored var gradientStart: Vec3?
     @ObservationIgnored var lastDirection: Vec3?
     @ObservationIgnored var smudgePrevious: [Vec3] = []
+    @ObservationIgnored var lastAspect = 1.5
+
+    // Sélection et transformation (voir SelectionUI.swift)
+    @ObservationIgnored var selection: SelectionMask?
+    private(set) var hasSelection = false
+    var selectionKind: SelectionKind = .rectangle
+    var selectionCombine: SelectionCombine = .replace
+    var selectionThreshold = 0.1
+    /// Tracé en cours, en NDC (affiché par-dessus la toile).
+    var selectionDrag: [SIMD2<Double>] = []
+    var transform: SphericalTransform?
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
@@ -194,8 +208,17 @@ final class CanvasSession {
     }
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
+        if transform != nil {
+            moveTransform(to: d)
+            return
+        }
+        if tool == .select {
+            selectionBegan(ndc: ndc, direction: d)
+            return
+        }
         switch tool {
         case .fill:
             fill(at: d)
@@ -226,8 +249,17 @@ final class CanvasSession {
     }
 
     func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        lastAspect = aspect
+        if tool == .select, transform == nil {
+            selectionMoved(ndc: ndc)
+            return
+        }
         guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
+        if transform != nil {
+            moveTransform(to: d)
+            return
+        }
         guard let canvas, canvas.isStroking else { return }
         let spacing = max(settings.radius(pressure: pressure) * settings.spacing, 1e-4)
         let centers = sampler.add(d, spacing: spacing)
@@ -244,6 +276,11 @@ final class CanvasSession {
     }
 
     func strokeEnded() {
+        if transform != nil { return }
+        if tool == .select {
+            selectionEnded()
+            return
+        }
         if tool == .gradient, let start = gradientStart, let end = lastDirection {
             gradientStart = nil
             applyGradient(from: start, to: end)
@@ -265,20 +302,27 @@ final class CanvasSession {
 
     func undo() {
         strokeCancelled()
-        if let entry = try? history.undo(in: stack) { invalidate(entry) }
+        cancelTransform()
+        if let entry = try? history.undo(in: historyTarget) { invalidate(entry) }
         refreshHistory()
     }
 
     func redo() {
         strokeCancelled()
-        if let entry = try? history.redo(in: stack) { invalidate(entry) }
+        cancelTransform()
+        if let entry = try? history.redo(in: historyTarget) { invalidate(entry) }
         refreshHistory()
     }
 
+    /// La pile et la sélection : tout ce que l'historique peut restaurer.
+    private var historyTarget: HistoryTarget { SessionHistoryTarget(stack: stack, selection: selection) }
+
     private func invalidate(_ entry: HistoryEntry) {
-        if entry.structure != nil || entry.isSpilled {
+        let changes = entry.allChanges
+        if let selection, changes.contains(where: { $0.layerID == selection.layer.id }) { selectionUpdated() }
+        if entry.structure != nil || entry.isSpilled || changes.count > 1 {
             structureChanged()
-        } else {
+        } else if entry.layerID != selection?.layer.id {
             canvas?.invalidate(entry.deltas.map(\.coord), layerID: entry.layerID)
         }
     }
@@ -436,6 +480,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         canvas.configure(&uniforms)
         uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
         uniforms.setGuides(enabled: session.guidesEnabled, spacingDegrees: session.guideSpacing)
+        uniforms.setSelection(visible: session.hasSelection, transform: session.transform)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()
@@ -568,8 +613,12 @@ struct CanvasScreen: View {
         ZStack(alignment: .topLeading) {
             MetalCanvas(session: session)
                 .ignoresSafeArea()
+            SelectionDragOverlay(session: session)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             VStack(alignment: .leading, spacing: 12) {
                 CanvasToolbar(session: session)
+                TransformPanel(session: session)
                 SideControls(session: session)
             }
             .padding(12)

@@ -30,6 +30,17 @@ public final class StackCanvas {
     public var forceCPU = false {
         didSet { if forceCPU != oldValue { setNeedsRefresh() } }
     }
+    /// Sélection active : la peinture et les outils y sont limités (chemin CPU), et l'affichage assombrit le reste.
+    public var selection: SelectionMask? {
+        didSet {
+            setNeedsRefresh()
+            selectionChanged()
+        }
+    }
+    /// Texture de la sélection pour l'affichage, et contenu flottant pendant une transformation.
+    public let selectionTexture: DisplayTexture?
+    public let floatingTexture: DisplayTexture?
+    public private(set) var hasFloating = false
 
     public let below: DisplayTexture?
     public let active: DisplayTexture?
@@ -60,6 +71,12 @@ public final class StackCanvas {
         below = belowTexture
         active = texture()
         above = texture()
+        // Sélection et contenu flottant : l'affichage suffit, une résolution réduite convient.
+        func preview() -> DisplayTexture? {
+            device.flatMap { try? DisplayTexture(device: $0, layerWidth: stack.width, maxWidth: min(maxDisplayWidth, 4096)) }
+        }
+        selectionTexture = preview()
+        floatingTexture = preview()
         let fullResolution = belowTexture?.isFullResolution == true && stack.format == .rgba16Float
         brush = fullResolution ? device.flatMap { try? BrushEngine(device: $0) } : nil
         queue = device?.makeCommandQueue()
@@ -111,14 +128,32 @@ public final class StackCanvas {
             pending.append(contentsOf: dabs)
         } else {
             let lock = !paintingMask && stack.item(activeID)?.alphaLock == true
-            for dab in dabs { compositeDirty.formUnion(target.stamp(dab, space: blendSpace, alphaLock: lock)) }
+            let limit: ((TileCoord) -> [Float]?)? = selection.map { mask in { mask.tileValues($0) } }
+            for dab in dabs { compositeDirty.formUnion(target.stamp(dab, space: blendSpace, alphaLock: lock, selection: limit)) }
         }
     }
 
     /// Modification libre du calque cible pendant un trait sur le chemin CPU (doigt, clonage) : `body` renvoie les tuiles touchées.
+    /// Avec une sélection, le résultat y est limité.
     public func edit(_ body: (TiledLayer) -> Set<TileCoord>) {
         guard stroking, !usesFastPath, let target = strokeLayer else { return }
-        compositeDirty.formUnion(body(target))
+        let tiles = body(target)
+        if let selection { target.constrainCurrentOperation(to: selection, tiles: tiles) }
+        compositeDirty.formUnion(tiles)
+    }
+
+    /// La sélection a changé (tracé, annulation…) : on la renvoie à l'affichage.
+    public func selectionChanged() {
+        selection?.invalidateCache()
+        guard let selectionTexture else { return }
+        if let selection { selectionTexture.uploadAll(selection.layer) }
+    }
+
+    /// Contenu à montrer pendant une transformation (le calque actif limité à la sélection), ou nil pour arrêter.
+    public func setFloating(_ layer: TiledLayer?) {
+        guard let floatingTexture else { return }
+        hasFloating = layer != nil
+        if let layer { floatingTexture.uploadAll(layer) }
     }
 
     /// Termine le trait : renvoie le calque modifié et ses deltas (vides si rien n'a changé).
@@ -177,14 +212,20 @@ public final class StackCanvas {
             active?.finishUpdates(commands)
             above?.finishUpdates(commands)
         }
+        if selection != nil { selectionTexture?.finishUpdates(commands) }
+        if hasFloating { floatingTexture?.finishUpdates(commands) }
         lastCommands = commands
     }
 
     /// Textures et uniformes de composition pour le renderer.
     public func panoramaLayers() -> PanoramaLayers? {
         guard let below else { return nil }
-        guard usesFastPath else { return PanoramaLayers(below: below.texture) }
-        return PanoramaLayers(below: below.texture, active: active?.texture, above: aboveIsEmpty ? nil : above?.texture)
+        var layers = usesFastPath
+            ? PanoramaLayers(below: below.texture, active: active?.texture, above: aboveIsEmpty ? nil : above?.texture)
+            : PanoramaLayers(below: below.texture)
+        if selection != nil { layers.selection = selectionTexture?.texture }
+        if hasFloating { layers.floating = floatingTexture?.texture }
+        return layers
     }
 
     public func configure(_ uniforms: inout ViewUniforms) {
@@ -203,7 +244,7 @@ public final class StackCanvas {
     }
 
     private func fastPathPossible() -> Bool {
-        guard brush != nil, !forceCPU, !paintingMask, let item = stack.item(activeID), let layer = item.layer,
+        guard brush != nil, !forceCPU, selection == nil, !paintingMask, let item = stack.item(activeID), let layer = item.layer,
               layer.format == .rgba16Float, item.parent == nil, !item.isClipped, item.mask == nil,
               let index = rootIndexOfActive else { return false }
         let aboveItems = stack.children(of: nil).dropFirst(index + 1)

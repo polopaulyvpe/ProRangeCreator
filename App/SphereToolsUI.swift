@@ -167,6 +167,8 @@ struct ToolOptions: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 160)
+        case .select:
+            SelectionOptions(session: session)
         }
     }
 
