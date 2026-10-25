@@ -1,0 +1,45 @@
+# Projet Xcode généré par XcodeGen sur le runner macOS de la CI (pas de Mac en local).
+# Ne jamais versionner ProRangeCreator.xcodeproj : il est régénéré à chaque build.
+name: ProRangeCreator
+options:
+  bundleIdPrefix: com.paulpenal
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  ProRangeKit:
+    path: Packages/ProRangeKit
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  ProRangeCreator:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: ProRangeKit
+        product: PRCore
+      - package: ProRangeKit
+        product: PREngine
+      - package: ProRangeKit
+        product: PRStorage
+      - package: ProRangeKit
+        product: PRImaging
+      - package: ProRangeKit
+        product: PRUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.paulpenal.prorangecreator
+        TARGETED_DEVICE_FAMILY: "2"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "ProRange Creator"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
+    scheme: {}

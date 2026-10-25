@@ -1,0 +1,157 @@
+import simd
+
+/// Toile équirectangulaire CPU en RGBA flottant linéaire prémultiplié.
+/// Sert de référence pour valider les kernels Metal, et de toile au spike. Pas faite pour le 16K.
+public final class EquirectCanvas {
+    public let width: Int
+    public let height: Int
+    public var pixels: [SIMD4<Float>]
+
+    private let rowSin: [Double]
+    private let rowCos: [Double]
+    private let colSin: [Double]
+    private let colCos: [Double]
+
+    public init(width: Int, height: Int, fill: SIMD4<Float> = .zero) {
+        precondition(width == 2 * height, "ratio 2:1 obligatoire")
+        self.width = width
+        self.height = height
+        pixels = Array(repeating: fill, count: width * height)
+        let thetas = (0..<height).map { (Double($0) + 0.5) / Double(height) * .pi }
+        let phis = (0..<width).map { ((Double($0) + 0.5) / Double(width) - 0.5) * 2 * .pi }
+        rowSin = thetas.map(sin)
+        rowCos = thetas.map(cos)
+        colSin = phis.map(sin)
+        colCos = phis.map(cos)
+    }
+
+    public subscript(x: Int, y: Int) -> SIMD4<Float> {
+        get { pixels[y * width + x] }
+        set { pixels[y * width + x] = newValue }
+    }
+
+    /// Identique à `Equirect.direction(x:y:width:height:)`, avec sinus/cosinus précalculés.
+    public func direction(x: Int, y: Int) -> Vec3 {
+        [rowSin[y] * colSin[x], rowCos[y], -rowSin[y] * colCos[x]]
+    }
+
+    /// Angle solide (stéradians) d'un texel de la rangée `y`.
+    public func texelSolidAngle(row y: Int) -> Double {
+        let t0 = Double(y) / Double(height) * .pi
+        let t1 = Double(y + 1) / Double(height) * .pi
+        return 2 * .pi / Double(width) * (cos(t0) - cos(t1))
+    }
+
+    /// Pas angulaire d'une rangée de texels.
+    public var pixelAngle: Double { .pi / Double(height) }
+
+    public func clear(to value: SIMD4<Float>) {
+        for i in pixels.indices { pixels[i] = value }
+    }
+
+    /// Encode des rangées en RGBA8 sRGB (prémultiplié) dans `buffer` (width × height × 4 octets).
+    public func encodeSRGB8(rows: ClosedRange<Int>, into buffer: inout [UInt8]) {
+        for y in rows {
+            for x in 0..<width {
+                let p = pixels[y * width + x]
+                let o = (y * width + x) * 4
+                buffer[o] = ColorTransfer.encode8(p.x)
+                buffer[o + 1] = ColorTransfer.encode8(p.y)
+                buffer[o + 2] = ColorTransfer.encode8(p.z)
+                buffer[o + 3] = UInt8(min(1, max(0, p.w)) * 255 + 0.5)
+            }
+        }
+    }
+}
+
+/// Un tampon de pinceau rond, défini sur la sphère.
+public struct SphericalDab: Sendable {
+    public var center: Vec3
+    /// Rayon angulaire en radians.
+    public var radius: Double
+    /// 1 = bord net, 0 = dégradé depuis le centre.
+    public var hardness: Double
+    /// RGB linéaire non prémultiplié ; `w` = opacité.
+    public var color: SIMD4<Float>
+
+    public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>) {
+        self.center = center
+        self.radius = radius
+        self.hardness = hardness
+        self.color = color
+    }
+}
+
+public enum SphericalRasterizer {
+    /// Couverture d'un point à la distance `distance` du centre, pour un rayon `radius`.
+    /// Bord antialiasé linéairement sur ±½ `pixelSize` autour du rayon.
+    public static func coverage(distance: Double, radius: Double, hardness: Double, pixelSize: Double) -> Double {
+        let rho = distance / radius
+        let e = pixelSize / radius
+        let edge = min(1, max(0, (1 - rho) / e + 0.5))
+        if hardness >= 1 || rho <= hardness { return edge }
+        let t = min(1, (rho - hardness) / (1 - hardness))
+        return edge * (1 - t * t * (3 - 2 * t))
+    }
+
+    /// Rend un dab texel par texel : chaque texel est projeté dans le plan tangent au point d'impact.
+    /// `bruteForce` parcourt toute la toile (pour tester `EquirectSpan`). Renvoie les rangées modifiées.
+    @discardableResult
+    public static func stamp(_ dab: SphericalDab, on canvas: EquirectCanvas, bruteForce: Bool = false) -> ClosedRange<Int>? {
+        let frame = TangentFrame(center: dab.center)
+        let pixelAngle = canvas.pixelAngle
+        let reach = dab.radius + pixelAngle
+        let cosReach = cos(reach)
+        let span = bruteForce
+            ? EquirectSpan(rows: 0...(canvas.height - 1), columns: [0...(canvas.width - 1)])
+            : EquirectSpan(center: frame.center, radius: reach, width: canvas.width, height: canvas.height)
+
+        var touched: ClosedRange<Int>?
+        for y in span.rows {
+            for range in span.columns {
+                for x in range {
+                    let d = canvas.direction(x: x, y: y)
+                    if simd_dot(d, frame.center) < cosReach { continue }
+                    let distance = simd_length(frame.project(d))
+                    let a = coverage(distance: distance, radius: dab.radius, hardness: dab.hardness, pixelSize: pixelAngle)
+                    if a <= 0 { continue }
+                    blend(dab.color, coverage: Float(a), into: &canvas.pixels[y * canvas.width + x])
+                    touched = touched.map { min($0.lowerBound, y)...max($0.upperBound, y) } ?? y...y
+                }
+            }
+        }
+        return touched
+    }
+
+    /// Tampon rond en espace pixel (pour comparer avec l'empreinte sphérique). Boucle en x, borné en y.
+    @discardableResult
+    public static func stampScreenSpace(center: SIMD2<Double>, radiusPixels: Double, hardness: Double,
+                                        color: SIMD4<Float>, on canvas: EquirectCanvas) -> ClosedRange<Int>? {
+        let reach = radiusPixels + 1
+        let y0 = max(0, Int(floor(center.y - reach)))
+        let y1 = min(canvas.height - 1, Int(ceil(center.y + reach)))
+        guard y0 <= y1 else { return nil }
+        let x0 = Int(floor(center.x - reach))
+        let x1 = Int(ceil(center.x + reach))
+        for y in y0...y1 {
+            for xi in x0...x1 {
+                let dx = Double(xi) + 0.5 - center.x
+                let dy = Double(y) + 0.5 - center.y
+                let a = coverage(distance: (dx * dx + dy * dy).squareRoot(), radius: radiusPixels,
+                                 hardness: hardness, pixelSize: 1)
+                if a <= 0 { continue }
+                let x = ((xi % canvas.width) + canvas.width) % canvas.width
+                blend(color, coverage: Float(a), into: &canvas.pixels[y * canvas.width + x])
+            }
+        }
+        return y0...y1
+    }
+
+    /// Source-over prémultiplié.
+    @inline(__always)
+    static func blend(_ color: SIMD4<Float>, coverage: Float, into dst: inout SIMD4<Float>) {
+        let a = coverage * color.w
+        let src = SIMD4<Float>(color.x * a, color.y * a, color.z * a, a)
+        dst = src + dst * (1 - a)
+    }
+}
