@@ -2,8 +2,8 @@
 
 | Phase | Contenu | État |
 |---|---|---|
-| 0 | Cadrage, squelette, CI, docs (D1, D7, D8) | ✅ fait, CI à valider au premier push |
-| 1 | Spike : projection et pinceau sphérique (CPU), mesure mémoire 16K | 🟡 code écrit, en attente de CI et de mesures sur l'iPad |
+| 0 | Cadrage, squelette, CI, docs (D1, D7, D8) | ✅ fait, CI verte |
+| 1 | Spike : projection et pinceau sphérique (CPU), mesure mémoire 16K | 🟡 15 tests verts sur CI, mesures sur l’iPad en attente |
 | 1 | Fondations : tuiles éparses, format de projet, journal (D2, D3) | ⏳ |
 | 2 | Visualisation : sphère, dépliage, fenêtre plane, LOD, tone mapping (D5, D12) | ⏳ |
 | 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | ⏳ |
