@@ -6,7 +6,7 @@
 | 1 | Spike : projection et pinceau sphérique (CPU), mesure mémoire 16K | 🟡 15 tests verts sur CI, mesures sur l’iPad en attente |
 | 1 | Fondations : tuiles éparses, format de projet, journal, déversement disque, budget mémoire (D2, D3) | ✅ CI verte ; mesures mémoire sur l'iPad en attente (installation bloquée côté Apple) |
 | 2 | Visualisation : sphère, dépliage, fenêtre plane, LOD, tone mapping (D5, D12) | 🟡 code et tests poussés ; reste à valider sur l'iPad (fluidité, gestes). Limite : affichage plafonné à 8K, pas encore de texture virtuelle pour le détail 16K. EDR non applicable (écran SDR) |
-| 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | ⏳ |
+| 3 | Cœur de peinture Metal, latence du stylet, gomme, couleur, annulation (D4, D6) | 🟡 code et 56 tests verts (GPU contre CPU sur le runner) ; reste à mesurer sur l’iPad la latence du trait (cible ≤ 16 ms) et à valider la sensation ; pas encore de prédiction des touches |
 | — | **MVP** = phases 0 à 3 + export EXR/HDR simple | ⏳ |
 | 4 | Calques, modes de fusion, masques, budget mémoire | ⏳ |
 | 5 | Outils sphériques | ⏳ |

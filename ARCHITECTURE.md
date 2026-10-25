@@ -126,7 +126,41 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
 
 ### Texture d'affichage et LOD (`DisplayTexture`)
 
-- Le panorama est mis en RGBA16F avec mipmaps, à partir des tuiles du calque, en composite sur le fond blanc. La pile de calques arrive en phase 4.
+- Le panorama du calque est mis en RGBA16F linéaire prémultiplié avec mipmaps, à partir des tuiles. Le **papier blanc est composé par le shader**, ce qui permet au pinceau GPU d'écrire directement dans cette texture. La pile de calques arrive en phase 4.
 - La largeur est plafonnée à 8K (`maxWidth`) : une toile 16K est réduite par moyenne de blocs 2×2. Côté GPU, une toile 8K occupe environ 360 Mo avec ses mipmaps.
 - Seules les tuiles modifiées sont renvoyées au GPU, et les mipmaps sont régénérées une fois par image si besoin.
 - **Limite connue** : à 16K, l'affichage plafonne à 8K. Il manque encore une texture virtuelle par tuiles pour afficher le détail 16K au zoom maximum. C'est prévu avec la passe de performance, et il faudra le mesurer sur l'appareil.
+
+## Peinture (phase 3)
+
+### Fusion et couleur (PRCore)
+
+- **D4** : par défaut, le mélange est **perceptuel** (`blendPerceptual`). La couleur de dessous est dé-prémultipliée, puis les deux couleurs sont encodées, mélangées en source-over et décodées ; le stockage reste linéaire prémultiplié. L'option `BlendSpace.linear` mélange en lumière linéaire.
+- La courbe de transfert est **prolongée linéairement au-delà de 1** (pente 1,055 / 2,4) : elle reste continue et réversible pour les valeurs HDR.
+- **Gomme** (`DabMode.erase`) : même forme et même moteur que le pinceau, avec `dst *= 1 − couverture × opacité`.
+- **Pression** (`BrushSettings`) :
+  - la taille varie de `minimumSize` à 1 (activé par défaut) ;
+  - l'opacité peut aussi suivre la pression (désactivé par défaut) ;
+  - le doigt compte comme une pression de 1 ;
+  - l'espacement entre dabs suit le rayon courant.
+- **Couleur** : `HSBColor` et `HexColor` travaillent sur les composantes encodées sRGB. La conversion en linéaire ne se fait qu'à la création du dab.
+
+### Pinceau GPU (`BrushEngine`) et cycle d'un trait (`LayerCanvas`)
+
+- **Kernel `stampDab`** : un dispatch par dab et par plage de colonnes de l'`EquirectSpan`, qui boucle sur la couture et prend les rangées entières aux pôles. Les dispatchs sont sérialisés dans l'ordre des dabs. Le calcul reproduit `DabEvaluator` et `SphericalRasterizer.apply`. Testé : à moins de 0,01 de la référence CPU, sur plus de 99,9 % des valeurs, dans les deux espaces de fusion.
+- **Pendant le trait** : les dabs s'accumulent et sont peints à l'image suivante, dans la texture du calque. La latence est donc d'une image, sans prédiction pour l'instant.
+- **Fin du trait** : on attend le GPU, on relit les tuiles touchées dans le calque CPU (`replaceTile`, enregistré), et on obtient les deltas de l'historique. Le calque CPU reste ainsi la source de vérité (sauvegarde, historique, déversement).
+- **Trait annulé** (second doigt, pipette, geste d'historique) : on recopie les tuiles touchées depuis le calque CPU, qui n'a pas changé. Il ne reste aucune trace.
+- **Repli CPU** si la texture n'est pas à pleine résolution (toile > 8K) ou si le calque est en 8 bits.
+
+### Gestes (App)
+
+| Geste | Action |
+|---|---|
+| 1 doigt ou Pencil | Peindre ou gommer (pression du Pencil) |
+| Second doigt posé pendant un trait | Le trait commencé est annulé |
+| Appui long 1 doigt (0,5 s) | Pipette (couleur affichée, composée sur le papier) |
+| Pincer, glisser à 2 doigts, tourner | Navigation (phase 2) |
+| Double tap 2 doigts | Annuler |
+| Double tap 3 doigts | Rétablir |
+| Maintien 2 doigts (0,6 s) | Annulation rapide continue |

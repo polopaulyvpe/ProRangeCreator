@@ -20,6 +20,7 @@ gh run view --log-failed
 | `SphericalBrushTests` | Empreinte bornée = parcours complet ; aire = calotte à 1,5 % près ; rondeur dans 16 secteurs à un texel près ; dureté |
 | `MemoryBudgetTests` | Tailles des calques pleins (2K à 16K) ; calques garantis pour 5 Gio disponibles |
 
+| `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
 ## Suites actuelles (PREngine) — sautées sans GPU
@@ -27,7 +28,8 @@ gh run view --log-failed
 | Suite | Vérifie |
 |---|---|
 | `PanoramaRendererTests` | Compilation du shader ; vue dépliée identique à la texture au pixel près ; vue sphère conforme aux directions CPU, couture comprise (moins de 2 % d'écarts d'un texel aux frontières) ; valeurs affichées dans [0, 1] pour les quatre courbes à +6 EV |
-| `DisplayTextureTests` | Réduction 2× et composite sur fond blanc |
+| `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
+| `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) ; trait annulé sans trace ; trait validé identique entre GPU et calque CPU, puis annulé par l'historique ; repli CPU |
 
 ## Suites actuelles (PRStorage)
 
