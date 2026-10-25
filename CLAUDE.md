@@ -12,8 +12,9 @@ Usage personnel de Paul, aucune publication. Aucune IA générative dans l'app. 
 - Le projet Xcode est **généré** par XcodeGen depuis `project.yml` sur la CI. Ne jamais versionner de `.xcodeproj`.
 - Appareil cible : **iPad Air 5** (M1, 8 Go, écran SDR non XDR, Apple Pencil 2 : pression, inclinaison, double tap ;
   pas de survol, de roll ni de squeeze). Installation du `.ipa` non signé par Paul via Sideloadly (Apple ID gratuit, 7 jours).
-- Les runners GitHub n'ont pas de GPU fiable : les tests Metal doivent se sauter proprement (`XCTSkip`) sans GPU,
-  et les mesures réelles (latence, mémoire, fps) sont faites par Paul sur l'iPad via les écrans de spike.
+- Le runner `macos-15` a un GPU Metal utilisable : les tests de rendu tournent et comparent le GPU à la référence CPU.
+  Ils restent écrits pour se sauter proprement (`XCTSkip`) sans GPU. Les mesures réelles (latence, mémoire, fps) sont faites
+  par Paul sur l'iPad.
 - Écrire du code Swift 6 qui compile du premier coup autant que possible : concurrence stricte, `@MainActor` pour l'UI,
   types `Sendable` dans PRCore. Relire chaque fichier avant de pousser : un aller-retour CI coûte 5 à 10 minutes.
 
