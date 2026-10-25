@@ -20,6 +20,15 @@ gh run view --log-failed
 | `SphericalBrushTests` | Empreinte bornée = parcours complet ; aire = calotte à 1,5 % près ; rondeur dans 16 secteurs à un texel près ; dureté |
 | `MemoryBudgetTests` | Tailles des calques pleins (2K à 16K) ; calques garantis pour 5 Gio disponibles |
 
+## Suites actuelles (PRStorage)
+
+| Suite | Vérifie |
+|---|---|
+| `TiledLayerTests` | Calque 16K vierge sans aucune tuile ; dab identique à la toile de référence (arrondi en demi-flottants) ; petit dab limité aux tuiles voisines ; dab au pôle (toute la rangée) et sur la couture ; remplissage uniforme et vidage ; recompression sans perte ; calque RGBA8 |
+| `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
+| `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
+| `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |
+
 ## Mesures sur l'appareil
 
 Les runners n'ont pas de GPU fiable, et la latence, la mémoire réelle et les fps ne se mesurent que sur l'iPad.

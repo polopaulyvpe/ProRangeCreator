@@ -1,3 +1,5 @@
+> **Brouillon d'une autre session (2026-10-25), non maintenu.** La référence est [ARCHITECTURE.md](../ARCHITECTURE.md) à la racine ; certaines idées ici (tuiles 512², annulation par rejeu du journal) ont été écartées, voir DECISIONS.md.
+
 # Architecture de ProRange Creator
 
 **Version** : 0.1 (draft — phase 0 spike)  

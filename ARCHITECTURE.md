@@ -5,7 +5,7 @@
 | Module | Rôle | État |
 |---|---|---|
 | `PRCore` | Vecteurs, projections équirectangulaires, plan tangent, échantillonnage des traits, couleur, budget mémoire, rasteriseur CPU de référence | Spike phase 1 |
-| `PRStorage` | Tuiles éparses, compression, déversement disque, format `.prorange`, journal d'opérations | Phase 1 |
+| `PRStorage` | Calques en tuiles éparses, compression LZFSE, historique par deltas, paquet `.prrange`, journal d'opérations | Phase 1 (déversement disque à venir) |
 | `PREngine` | Metal : pinceau, composition, filtres, sondes mémoire | Sonde mémoire seulement |
 | `PRImaging` | Codecs EXR / HDR / PNG / TIFF, cubemap, export en flux | Phase 7 |
 | `PRUI` | Composants SwiftUI partagés | Phase 3 |
@@ -43,6 +43,43 @@ Le kernel Metal (phase 3) reprendra exactement ce calcul, et sera testé contre 
 - `MemoryBudget.guaranteedLayers` donne le pire cas : tous les calques pleins et résidents, plus 3 équivalents-calques de travail (cache dessous, cache dessus, tampon de trait) et 400 Mio de réserve.
 - L'écran « Mémoire » du spike mesure `os_proc_available_memory` sur l'appareil et alloue de vraies textures Metal jusqu'à l'échec.
 
-## Pipeline de rendu, format de projet, journal
+## Stockage (PRStorage)
 
-À définir en phases 1 et 2.
+### Calques tuilés (`TiledLayer`)
+
+- Tuiles de 256² (D2, `TileSize.side`), coordonnées `TileCoord(level, x, y)` ; `level` 0 = résolution de travail, les niveaux suivants serviront au LOD.
+- Format par calque (D3) : `rgba16Float` (demi-flottants linéaires prémultipliés, 8 o/px) ou `rgba8` (sRGB prémultiplié, 4 o/px, écrêté à [0, 1]).
+- Chaque tuile est dans l'un de ces états :
+  - absente : jamais peinte ou revenue à transparent, elle n'occupe rien ;
+  - uniforme : un seul pixel brut ;
+  - pixels : décompressée, en cours de travail ;
+  - compressée : LZFSE en mémoire.
+- `putPixels` normalise automatiquement : une tuile uniforme est réduite à un pixel, une tuile transparente est supprimée. `compact(keeping:)` recompresse les tuiles hors de la zone de travail.
+- Le pinceau (`stamp`) calcule d'abord la couverture du dab sur chaque tuile de l'`EquirectSpan` : une tuile que le dab ne touche pas n'est ni créée ni enregistrée. Il applique ensuite le même `DabEvaluator` que la toile CPU de référence. Testé : résultat identique à la référence, arrondi en demi-flottants.
+
+### Historique (`UndoRedoManager`)
+
+- `perform(name, on: layer) { … }` encadre une opération : `beginOperation` mémorise l'état d'avant (`TileState`) de chaque tuile au premier contact, `endOperation` produit les `TileDelta` (avant/après) des seules tuiles réellement changées.
+- Annuler applique les états « avant », rétablir les états « après » : c'est exact au bit près, sans rejouer de trait.
+- Plafond par défaut de 1 000 pas. Une nouvelle opération efface la branche à rétablir. Le débordement sur disque viendra avec le gestionnaire de budget mémoire.
+
+### Paquet de projet `.prrange`
+
+```
+Projet.prrange/
+  manifest.json                         version, largeur, hauteur, taille de tuile, espace couleur, calques (id, nom, format, opacité, visibilité)
+  layers/{uuid}/tiles/0/{x}_{y}.tile.lzfse   pixels bruts du format du calque, compressés
+  layers/{uuid}/tiles/0/{x}_{y}.uniform      un pixel brut
+  journal.bin                            journal binaire des opérations (timelapse)
+```
+
+- La sauvegarde écrit dans un dossier temporaire voisin, puis remplace l'ancien paquet d'un coup. Le journal est conservé.
+- Le chargement vérifie la version et la taille de tuile, et décompresse chaque tuile une fois pour la valider.
+
+### Journal d'opérations (`OperationJournal`)
+
+Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme, remplissage, transformation, marqueur). Il sert au timelapse et à l'inspection, pas à l'annulation.
+
+## Pipeline de rendu
+
+À définir en phase 2.
