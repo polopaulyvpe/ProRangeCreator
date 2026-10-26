@@ -221,6 +221,30 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
   - **C, cubemap** : six fichiers (ordre déduit des noms px/posx/right…), croix horizontale ou verticale, ou bande, détectée d'après les proportions ; reconversion par `CubemapFace.locate`.
 - Sources d'import : fichier (sélection multiple pour six faces), Photos, presse-papiers, glisser-déposer sur la toile.
 
+### Forme, grain et pinceaux importés (phase 7, lot C)
+
+- **Pointe** (`DabTip`, facultative dans `SphericalDab` : sans elle, le dab rond est inchangé) :
+  - **forme** (`BrushTexture`, niveaux de gris, blanc = peinture) étendue sur le carré [-r, r]² du plan tangent azimutal équidistant, donc sans distorsion sur la sphère ;
+  - rotation par rapport à l'est local, fixe ou qui **suit le trait** : l'angle du trait est la direction depuis le dab précédent dans le plan tangent ; chaque copie de symétrie a le sien ;
+  - la portée passe à r·√2 (coins du carré) ;
+  - **grain fixé à la sphère** : projection triplanaire de la direction (poids |d|⁴), donc sans couture ni pôle ; échelle angulaire et profondeur réglables.
+- `DabEvaluator` (CPU) est la référence. Le kernel `stampDab` fait le même calcul avec deux textures r32Float (forme bornée, grain répété) et un cache de 16 textures par `BrushTexture`. Le chemin CPU (sélection, masque) gère aussi forme et grain.
+- **Fichiers** (`BrushFiles.swift`) :
+  - `.prbrush` natif : JSON, textures en octets ; bibliothèque dans Documents/Pinceaux ;
+  - **Procreate** `.brush` / `.brushset` : lecteur ZIP minimal (stocké et deflate, pas de ZIP64). Pour chaque `Brush.archive` (plist NSKeyedArchiver), on prend l'objet qui porte le plus de clés connues, on lit les nombres, et le nom passe par sa référence (UID lu dans la description). `Shape.png` et `Grain.png` deviennent forme et grain ;
+  - clés reprises : maxSize/paintSize, minSize, maxOpacity/paintOpacity, plotSpacing (fraction du diamètre → du rayon), dynamicsPressureSize/Opacity, shapeRotation, shapeOrientation, textureScale/grainScale, textureDepth/grainDepth, hardness ;
+  - toutes les autres clés sont listées comme ignorées dans le compte rendu d'import. Les noms de clés viennent de la rétro-ingénierie communautaire, **non vérifiés sur de vrais fichiers** ;
+  - **image PNG** (ou autre) comme forme ou grain : luminance encodée, ou alpha si l'image a de la transparence, recadrée en carré ≤ 512, avec inversion au choix.
+- Non gérés : jitter, dynamique de vitesse et d'inclinaison, mélange et humidité, double forme, `.abr` (D9).
+
+### Timelapse (phase 7, lot C)
+
+- Après chaque opération (et chaque annulation), `refreshHistory` demande une capture. À l'image suivante, le rendu attend la fin du GPU puis dessine hors écran la vue dépliée entière en 1024 × 512, avec l'exposition et la courbe de l'écran. `TimelapseRecorder` l'encode en JPEG sur une file série.
+- Les images sont dans `Caches/Timelapse/courant`, copiées dans `<projet>.prrange/timelapse/` à l'enregistrement et rechargées à l'ouverture.
+- **Export H.265** (`TimelapseExporter`, AVAssetWriter, .mp4, 30 i/s) :
+  - vue dépliée, ou sphère qui tourne : reprojection rectiligne CPU, n tours, champ réglable ;
+  - chaque capture est répétée pour atteindre une durée minimale, et la dernière est tenue 1 s.
+
 ### Projets dans l'app
 
 - `Documents/Projets/<nom>.prrange` (format `ProjectPackage`) et `Documents/Exports/`. Les deux sont visibles dans l'app Fichiers (`UIFileSharingEnabled`), et l'export propose aussi la feuille de partage.

@@ -26,6 +26,7 @@ gh run view --log-failed
 | `DeformationTests` | Gnomonique aller-retour ; homographie par quatre coins (coins, inverse, identité, cas dégénéré) ; distorsion (identité, décalage, hémisphère opposé) ; QuickShape (ligne tremblée, cercle, gribouillis refusé) |
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `AdjustmentTests` | Courbe identité, monotone, passant par ses points, prolongée en HDR ; ajustements neutres, désaturation, inversion, dégradé, recoloration (hors tolérance intacte), teinte HDR, balance ; bruit sphérique déterministe, continu sur la couture, uniforme |
+| `BrushTipTests` | Échantillonnage bilinéaire (centres de texels, répétition) ; forme sur la sphère (côtés, coins du carré, hors carré), demi-tour ; grain (profondeur, continuité sur la couture) ; réglages → pointe et angle du trait |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
 ## Suites actuelles (PREngine) — sautées sans GPU
@@ -38,6 +39,7 @@ gh run view --log-failed
 | `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
 | `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) |
 | `FilterEngineTests` | **Les ajustements GPU contre `Adjustment.apply`** ; flou, bruit et aberration chromatique GPU contre CPU ; flou de mouvement et netteté laissent un aplat intact ; bloom (rien sous le seuil, halo autour du HDR) ; aperçu en direct dans la toile, annulé sans trace puis appliqué |
+| `BrushTipGPUTests` | **Forme tournée et grain triplanaire : kernel GPU contre `DabEvaluator`** (équateur, couture, pôle, HDR) |
 | `StackCanvasTests` | **Shader contre compositeur CPU pour les 26 modes × 2 espaces** (chemin GPU) ; chemin CPU (Produit au-dessus, masque) ; peinture du masque ; trait GPU annulé sans trace, validé identique au calque CPU, annulé par l'historique ; verrou alpha GPU = CPU |
 
 ## Suites actuelles (PRImaging)
@@ -48,6 +50,8 @@ gh run view --log-failed
 
 | `FullExportTests` | **PNG 8/16, TIFF 16/32 et JPG relus par ImageIO** (valeurs exactes à l'arrondi près, HDR conservé en TIFF) ; orientation (lacet = décalage exact, miroir) ; cubemap : aller-retour face/direction, centre de chaque face, croix et bande ; lot de résolutions ; annulation sans fichier pour PNG, TIFF, JPG ; courbes de tone mapping |
 | `ImportTests` | Décodage PNG (linéaire), EXR (notre lecteur et ImageIO avec alpha corrigé), HDR ; panorama identique à même taille, réduction, lacet ; recadrage et marges d'une image carrée ; **aller-retour équirect → cubemap → équirect** (> 30 dB) ; croix découpée = six faces ; ordre de la bande ; détection des dispositions |
+
+| `BrushAndTimelapseTests` | Faux `.brush` (ZIP stocké et deflate, archive NSKeyedArchiver) : nom, opacité, espacement, rotation, grain, pression repris, clé inconnue signalée, forme lue ; `.brushset` à deux pinceaux ; `.prbrush` aller-retour ; PNG → forme et grain inversé ; **timelapse** : captures, export HEVC déplié et sphère (codec et durée vérifiés par AVFoundation), copie et rechargement avec le projet |
 
 ## Suites actuelles (PRStorage)
 

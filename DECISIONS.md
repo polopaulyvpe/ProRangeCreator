@@ -26,6 +26,8 @@
 | — | 2026-10-26 | Orientation d'export par défaut : **Blender** | Choix de Paul | UE5 ; générique |
 | — | 2026-10-26 | Encodeurs **PNG et TIFF maison**, JPG par ImageIO | Vrai flux par bandes (ImageIO veut une image entière) ; zlib déjà présent pour l'EXR | ImageIO pour tout (pics mémoire en 16K) |
 | — | 2026-10-26 | PIZ toujours non écrit (D10 inchangé) ; à l'import, les EXR PIZ/DWAA passent par ImageIO | ImageIO sait les lire ; écrire PIZ reste un gros chantier pour peu de gain face à ZIP | Écrivain PIZ maison |
+| — | 2026-10-26 | Forme dans le **plan tangent** du dab ; grain **triplanaire fixé à la sphère** | Forme sans distorsion à toute latitude ; le grain doit tenir à la toile comme le « grain texturé » de Procreate, sans couture ni pôle | Grain dans le repère du dab (glisse avec le trait) ; grain en équirectangulaire (étiré aux pôles) |
+| — | 2026-10-26 | Format natif nommé **.prbrush** (le cahier disait `.zenithbrush`) | Le nom de l'app est ProRange Creator (D8) | .zenithbrush |
 
 ## Conséquences de l'iPad Air 5
 
