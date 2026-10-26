@@ -80,7 +80,7 @@ final class CanvasSession {
     var fileMessage: String?
     var isExporting = false
     var exportProgress = 0.0
-    var lastExportURL: URL?
+    var lastExportURLs: [URL] = []
     @ObservationIgnored var exportCancel: CancelFlag?
     /// Lu à chaque image et modifié par les gestes : hors observation pour ne pas redessiner SwiftUI en continu.
     @ObservationIgnored var view = ViewState()
