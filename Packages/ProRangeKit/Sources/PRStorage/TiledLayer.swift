@@ -26,9 +26,7 @@ public final class TiledLayer {
         case spilled
     }
 
-    private var tiles: [TileCoord: Content] = [:] {
-        didSet { contentVersion &+= 1 }
-    }
+    private var tiles: [TileCoord: Content] = [:]
     /// Change à chaque écriture de tuile (vignettes et caches à refaire seulement pour les calques modifiés).
     public private(set) var contentVersion = 0
     /// États d'avant des tuiles touchées pendant l'opération en cours.
@@ -375,6 +373,7 @@ public final class TiledLayer {
 
     /// Remplace le contenu d'une tuile en supprimant son fichier déversé s'il y en avait un.
     private func setContent(_ content: Content?, at coord: TileCoord) {
+        contentVersion &+= 1
         if case .spilled = tiles[coord] { try? spillStore?.delete(coord) }
         tiles[coord] = content
     }
@@ -398,6 +397,7 @@ public final class TiledLayer {
 
     /// Range une tuile en la normalisant : uniforme → un pixel, transparente → supprimée.
     private func putPixels(_ pixels: [UInt8], at coord: TileCoord) {
+        contentVersion &+= 1
         let bpp = format.bytesPerPixel
         let uniform = pixels.withUnsafeBytes { raw -> Bool in
             let base = raw.baseAddress!

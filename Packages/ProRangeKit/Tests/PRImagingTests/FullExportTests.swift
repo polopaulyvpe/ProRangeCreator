@@ -232,6 +232,23 @@ final class FullExportTests: XCTestCase {
         }
     }
 
+    func testUpscaledExport() throws {
+        let layer = axesLayer()
+        let target = url("x2.exr")
+        try PanoramaExporter.export(layer, as: .exr(.float, .zip, includeAlpha: true),
+                                    options: PanoramaExportOptions(paper: nil, upscale: 2), to: target)
+        let big = try EXRReader.read(target)
+        XCTAssertEqual(big.width, 2048)
+        XCTAssertEqual(big.height, 1024)
+        let source = LayerRowSource(layer: layer, paper: nil).rows(0, 512)
+        // Centre d'une tache : même couleur ; agrandi = interpolation des voisins de la source.
+        let c = big.pixels[512 * 2048 + 1024]
+        XCTAssertLessThan(simd_distance(c, source[256 * 1024 + 512]), 0.02)
+        XCTAssertLessThan(simd_distance(big.pixels[520 * 2048 + 1030], source[260 * 1024 + 515]), 0.02, "intérieur uniforme")
+        let empty = Equirect.pixel(from: Equirect.direction(latitude: 0.5, longitude: .pi / 4), width: 2048, height: 1024)
+        XCTAssertEqual(big.pixels[Int(empty.y) * 2048 + Int(empty.x)].w, 0, accuracy: 1e-6, "vide reste vide")
+    }
+
     func testToneMappingCurves() {
         let gray = SIMD3<Float>(repeating: 0.18)
         for curve in ToneMapping.allCases {

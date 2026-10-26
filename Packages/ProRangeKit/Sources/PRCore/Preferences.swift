@@ -59,7 +59,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     /// Plafond de l'historique, en pas.
     public var historyLimit = 1000
     /// Largeur des nouveaux projets (2:1).
-    public var canvasWidth = 8192
+    public var canvasWidth = 4096
 
     public static let historyLimits = [100, 250, 500, 1000, 2000]
     public static let canvasWidths = [2048, 4096, 8192]
@@ -72,7 +72,9 @@ public struct Preferences: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case theme, leftHanded, pressureGamma, twoFingerDoubleTap, threeFingerDoubleTap, fourFingerTap
-        case rapidUndoHold, eyedropperHold, fingerPainting, blendSpace, toneMapping, historyLimit, canvasWidth
+        case rapidUndoHold, eyedropperHold, fingerPainting, blendSpace, toneMapping, historyLimit
+        // Nouvelle clé : l'ancien défaut (8K) enregistré est ignoré, les nouveaux projets passent en 4K.
+        case canvasWidth = "canvasWidthV2"
     }
 
     public init(from decoder: any Decoder) throws {

@@ -110,3 +110,16 @@ private struct PressureCurvePreview: View {
         }
     }
 }
+
+extension CanvasSession {
+    /// Divise la résolution du projet par deux (8K → 4K…) : calques et masques moyennés, historique vidé, projet enregistré.
+    func halveResolution() {
+        guard stack.width >= 4096 else { return }
+        strokeCancelled()
+        let from = stack.width
+        replaceStack(stack.halved())
+        hasUnsavedChanges = true
+        saveProject(silently: true)
+        showToast("Résolution : \(from / 1024)K → \(stack.width / 1024)K")
+    }
+}

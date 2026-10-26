@@ -17,28 +17,32 @@ extension CanvasSession {
         return timelapse
     }
 
-    /// Capture de la vue dépliée entière (1024 × 512, exposition et courbe de l'écran), après une opération :
-    /// image du timelapse s'il est actif, et toujours la vignette de la galerie.
-    func captureTimelapseFrame(canvas: StackCanvas, renderer: PanoramaRenderer) {
-        guard let layers = canvas.panoramaLayers() else { return }
-        let width = 1024, height = 512
+    /// Image d'une opération pour le timelapse (seulement s'il est activé) : 2048 × 1024, pour un export de bonne qualité.
+    func captureTimelapseFrame() {
+        guard timelapseEnabled, let recorder = timelapseRecorder else { return }
+        let width = 2048, height = 1024
+        guard let rgba = renderUnfolded(width: width, height: height) else { return }
+        recorder.append(rgba: rgba, width: width, height: height)
+        timelapseFrames = recorder.frameCount
+    }
+
+    /// Vue dépliée entière rendue hors écran (exposition et courbe de l'écran), en RGBA 8 bits sRGB.
+    func renderUnfolded(width: Int, height: Int) -> [UInt8]? {
+        guard let canvas, let renderer, let layers = canvas.panoramaLayers() else { return nil }
         var state = ViewState()
         state.mode = .unfolded
         state.morph = 1
         var uniforms = ViewUniforms(state.parameters(aspect: 2), viewportHeight: height, textureHeight: layers.below.height,
                                     exposure: exposure, toneMapping: toneMapping)
         canvas.configure(&uniforms)
-        guard let halves = try? renderer.renderOffscreen(layers: layers, width: width, height: height, uniforms: uniforms) else { return }
+        guard let halves = try? renderer.renderOffscreen(layers: layers, width: width, height: height, uniforms: uniforms) else { return nil }
         var rgba = [UInt8](repeating: 255, count: width * height * 4)
         for i in 0..<(width * height) {
             rgba[i * 4] = ColorTransfer.encode8(Float(halves[i * 4]))
             rgba[i * 4 + 1] = ColorTransfer.encode8(Float(halves[i * 4 + 1]))
             rgba[i * 4 + 2] = ColorTransfer.encode8(Float(halves[i * 4 + 2]))
         }
-        latestPreview = (rgba, width, height)
-        guard timelapseEnabled, let recorder = timelapseRecorder else { return }
-        recorder.append(rgba: rgba, width: width, height: height)
-        timelapseFrames = recorder.frameCount
+        return rgba
     }
 
     func startTimelapseExport(view: TimelapseView, width: Int, height: Int) {

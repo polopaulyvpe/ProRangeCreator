@@ -24,7 +24,9 @@ struct GalleryScreen: View {
                 PhotosPicker("Photo", selection: $photo, matching: .images)
                 Menu {
                     ForEach(Preferences.canvasWidths, id: \.self) { width in
-                        Button("\(width / 1024)K — \(width) × \(width / 2)") { session.createProject(width: width) }
+                        Button("\(width / 1024)K — \(width) × \(width / 2)\(width == 4096 ? " (recommandé)" : width == 8192 ? " (lourd)" : "")") {
+                            session.createProject(width: width)
+                        }
                     }
                 } label: {
                     Image(systemName: "plus").font(.system(size: 24, weight: .regular))

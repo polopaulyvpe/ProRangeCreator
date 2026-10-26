@@ -41,14 +41,17 @@ public struct PanoramaExportOptions: Sendable {
     public var layout: PanoramaLayout
     /// Exposition et courbe des formats d'écran (PNG, JPG).
     public var display: DisplayTransform
+    /// Agrandissement de l'équirectangulaire (1 ou 2) : image plus grande que la toile, sans détail en plus.
+    public var upscale: Int
 
     public init(downscale: Int = 1, paper: SIMD3<Float>? = [1, 1, 1], orientation: ExportOrientation = .identity,
-                layout: PanoramaLayout = .equirectangular, display: DisplayTransform = DisplayTransform()) {
+                layout: PanoramaLayout = .equirectangular, display: DisplayTransform = DisplayTransform(), upscale: Int = 1) {
         self.downscale = downscale
         self.paper = paper
         self.orientation = orientation
         self.layout = layout
         self.display = display
+        self.upscale = max(1, upscale)
     }
 }
 
@@ -180,7 +183,7 @@ public enum PanoramaExporter {
                        to url: URL, progress: @escaping ExportProgress) throws -> [URL] {
         switch options.layout {
         case .equirectangular:
-            let (width, height, rows) = LayoutSource.equirectangular(source, orientation: options.orientation)
+            let (width, height, rows) = LayoutSource.equirectangular(source, orientation: options.orientation, upscale: options.upscale)
             try write(width: width, height: height, rows: rows, as: format, display: options.display, to: url, progress: progress)
             return [url]
         case .cubeFaces:

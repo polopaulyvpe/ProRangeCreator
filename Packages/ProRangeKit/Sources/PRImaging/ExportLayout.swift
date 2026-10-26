@@ -200,12 +200,15 @@ final class CompositeSampler {
 /// Sources de lignes pour chaque disposition (équirectangulaire orientée, face, croix, bande).
 enum LayoutSource {
     /// Équirectangulaire avec décalage entier et miroir, appliqués ligne par ligne : sans perte.
-    static func equirectangular(_ source: LayerRowSource, orientation: ExportOrientation) -> (Int, Int, RowProvider) {
-        let width = source.width
+    static func equirectangular(_ source: LayerRowSource, orientation: ExportOrientation, upscale: Int = 1) -> (Int, Int, RowProvider) {
+        let base: (Int, Int, RowProvider) = upscale > 1
+            ? upscaled(source, factor: upscale)
+            : (source.width, source.height, { y, count in source.rows(y, count) })
+        let (width, height, baseRows) = base
         let shift = ((orientation.pixelShift(width: width) % width) + width) % width
         let flip = orientation.flipHorizontal
         let rows: RowProvider = { y, count in
-            let band = source.rows(y, count)
+            let band = try baseRows(y, count)
             guard shift != 0 || flip else { return band }
             var out = band
             for row in 0..<count {
@@ -217,7 +220,41 @@ enum LayoutSource {
             }
             return out
         }
-        return (width, source.height, rows)
+        return (width, height, rows)
+    }
+
+    /// Agrandissement bilinéaire (bouclé en x, borné en y), en flux : chaque bande lit les lignes source dont elle a besoin.
+    /// Une image plus grande, sans détail en plus que la toile.
+    static func upscaled(_ source: LayerRowSource, factor: Int) -> (Int, Int, RowProvider) {
+        let sw = source.width, sh = source.height
+        let w = sw * factor, h = sh * factor
+        let f = Double(factor)
+        let rows: RowProvider = { y, count in
+            func src(_ o: Int) -> Double { (Double(o) + 0.5) / f - 0.5 }
+            let a = max(0, Int(floor(src(y))))
+            let b = min(sh - 1, Int(floor(src(y + count - 1))) + 1)
+            let band = source.rows(a, b - a + 1)
+            var out = [SIMD4<Float>](repeating: .zero, count: w * count)
+            for r in 0..<count {
+                let sy = min(Double(sh - 1), max(0, src(y + r)))
+                let y0 = Int(floor(sy))
+                let fy = Float(sy - Double(y0))
+                let y1 = min(sh - 1, y0 + 1)
+                let r0 = (y0 - a) * sw, r1 = (y1 - a) * sw
+                for x in 0..<w {
+                    let sx = src(x)
+                    let x0 = floor(sx)
+                    let fx = Float(sx - x0)
+                    let xa = ((Int(x0) % sw) + sw) % sw
+                    let xb = (xa + 1) % sw
+                    let top = band[r0 + xa] * (1 - fx) + band[r0 + xb] * fx
+                    let bottom = band[r1 + xa] * (1 - fx) + band[r1 + xb] * fx
+                    out[r * w + x] = top * (1 - fy) + bottom * fy
+                }
+            }
+            return out
+        }
+        return (w, h, rows)
     }
 
     /// Côté d'une face : un quart de la largeur du panorama réduit.

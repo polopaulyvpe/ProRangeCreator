@@ -340,6 +340,7 @@ struct ActionsPanel: View {
     @Bindable var session: CanvasSession
     @State private var tab: ActionsTab = .add
     @State private var photo: PhotosPickerItem?
+    @State private var confirmHalve = false
 
     var body: some View {
         PanelContainer(title: "Actions", width: 400) {
@@ -364,6 +365,13 @@ struct ActionsPanel: View {
             case .video: videoTab
             case .prefs: prefsTab
             case .help: helpTab
+            }
+        }
+        .confirmationDialog("Diviser la résolution par deux ? Plus léger et plus rapide ; l'historique est vidé et les détails les plus fins sont perdus.",
+                            isPresented: $confirmHalve, titleVisibility: .visible) {
+            Button("Réduire") {
+                session.showActions = false
+                session.halveResolution()
             }
         }
         .onChange(of: photo) { _, item in
@@ -424,6 +432,11 @@ struct ActionsPanel: View {
             }
             PanelSection {
                 PanelRow("Instantanés…") { session.showActions = false; session.showSnapshots = true }
+                if session.stack.width >= 4096 {
+                    PanelRow("Réduire la résolution : \(session.stack.width / 1024)K → \(session.stack.width / 2048)K") { confirmHalve = true }
+                } else {
+                    PanelRowLabel("Résolution : \(session.stack.width) × \(session.stack.height)")
+                }
                 PanelRow("Enregistrer maintenant") { session.saveProject() }
             }
         }

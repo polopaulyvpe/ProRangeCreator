@@ -95,7 +95,8 @@ final class CanvasSession {
     var hasUnsavedChanges = false
     @ObservationIgnored var autosaveTask: Task<Void, Never>?
     /// Dernière capture de la vue dépliée (vignette de la galerie).
-    @ObservationIgnored var latestPreview: (rgba: [UInt8], width: Int, height: Int)?
+    /// Rendu hors écran (vignette de la galerie, timelapse), fourni par la vue Metal.
+    @ObservationIgnored var renderer: PanoramaRenderer?
     var showProjects = false
     var showSnapshots = false
     var showExport = false
@@ -175,7 +176,8 @@ final class CanvasSession {
     var preferences = Preferences.decode(UserDefaults.standard.data(forKey: "preferences")) {
         didSet { UserDefaults.standard.set(preferences.encoded(), forKey: "preferences") }
     }
-    var timelapseEnabled = true
+    /// Désactivé par défaut : une capture après chaque opération coûte du temps.
+    var timelapseEnabled = false
     var timelapseFrames = 0
     @ObservationIgnored var timelapse: TimelapseRecorder?
     @ObservationIgnored var timelapseCaptureRequested = false
@@ -491,9 +493,8 @@ final class CanvasSession {
     func refreshHistory() {
         canUndo = history.canUndo
         canRedo = history.canRedo
-        // Chaque opération (et chaque annulation) donne une image au timelapse, capturée à la prochaine image affichée,
-        // et relance le délai de la sauvegarde automatique.
-        timelapseCaptureRequested = true
+        // Timelapse activé : une image par opération (et par annulation), capturée à la prochaine image affichée.
+        timelapseCaptureRequested = timelapseEnabled
         historyRevision += 1
         scheduleAutosave()
     }
@@ -608,6 +609,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         self.device = device
         queue = device?.makeCommandQueue()
         renderer = device.flatMap { try? PanoramaRenderer(device: $0) }
+        session.renderer = renderer
         session.device = device
         if session.canvas == nil { session.replaceStack(session.stack) }
     }
@@ -640,7 +642,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         if session.timelapseCaptureRequested {
             session.timelapseCaptureRequested = false
             commands.waitUntilCompleted() // la capture doit voir les derniers dabs écrits dans les textures
-            session.captureTimelapseFrame(canvas: canvas, renderer: renderer)
+            session.captureTimelapseFrame()
         }
     }
 

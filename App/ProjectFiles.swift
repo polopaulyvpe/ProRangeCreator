@@ -109,9 +109,9 @@ extension CanvasSession {
             try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
             // Le timelapse vit à côté du paquet : déplacé au premier enregistrement, jamais recopié ensuite.
             try timelapseRecorder?.relocate(to: library.timelapseDirectory(for: url))
-            if let preview = latestPreview {
-                TimelapseRecorder.writeJPEG(preview.rgba, width: preview.width, height: preview.height,
-                                            to: url.appendingPathComponent(ProjectLibrary.thumbnailName))
+            // Vignette de la galerie, rendue à l'enregistrement seulement (pas après chaque opération).
+            if let rgba = renderUnfolded(width: 640, height: 320) {
+                TimelapseRecorder.writeJPEG(rgba, width: 640, height: 320, to: url.appendingPathComponent(ProjectLibrary.thumbnailName))
             }
             projectURL = url
             projectName = url.deletingPathExtension().lastPathComponent
@@ -345,6 +345,9 @@ struct ExportSheet: View {
     @State private var activeLayerOnly = false
     @State private var exposure = 0.0
     @State private var toneMapping: ToneMapping = .clip
+    @State private var upscale = false
+
+    private var upscaling: Bool { upscale && layout == .equirectangular }
 
     private var format: PanoramaFormat {
         switch kind {
@@ -363,7 +366,8 @@ struct ExportSheet: View {
         return PanoramaExportOptions(paper: includePaper || kind == .jpeg ? [1, 1, 1] : nil,
                                      orientation: ExportOrientation(yawDegrees: base.yawDegrees + extraYaw, flipHorizontal: flip),
                                      layout: layout,
-                                     display: DisplayTransform(exposure: exposure, toneMapping: toneMapping))
+                                     display: DisplayTransform(exposure: exposure, toneMapping: toneMapping),
+                                     upscale: upscaling ? 2 : 1)
     }
 
     private var availableDownscales: [Int] { [1, 2, 4, 8, 16].filter { session.stack.width / $0 >= 512 } }
@@ -384,16 +388,21 @@ struct ExportSheet: View {
                     }
                 }
                 Section {
-                    ForEach(availableDownscales, id: \.self) { f in
-                        Toggle(isOn: Binding(get: { downscales.contains(f) },
-                                             set: { on in if on { downscales.insert(f) } else if downscales.count > 1 { downscales.remove(f) } })) {
-                            Text(resolutionText(f))
+                    if layout == .equirectangular {
+                        Toggle("Agrandir ×2 : \(session.stack.width * 2) × \(session.stack.height * 2)", isOn: $upscale)
+                    }
+                    if !upscaling {
+                        ForEach(availableDownscales, id: \.self) { f in
+                            Toggle(isOn: Binding(get: { downscales.contains(f) },
+                                                 set: { on in if on { downscales.insert(f) } else if downscales.count > 1 { downscales.remove(f) } })) {
+                                Text(resolutionText(f))
+                            }
                         }
                     }
                 } header: {
                     Text("Résolution")
                 } footer: {
-                    Text("Plusieurs résolutions cochées : un fichier par résolution, suffixé de sa largeur.")
+                    Text("Plusieurs résolutions cochées : un fichier par résolution, suffixé de sa largeur. « Agrandir » donne une image plus grande pour les logiciels qui l'exigent, sans détail en plus que la toile.")
                 }
                 Section("Orientation") {
                     Picker("Logiciel", selection: $preset) {
@@ -472,7 +481,8 @@ struct ExportSheet: View {
                 Button("Annuler l'export", role: .destructive) { session.cancelExport() }
             } else {
                 Button("Exporter", systemImage: "square.and.arrow.up") {
-                    session.startExport(format: format, options: options, downscales: downscales.sorted(), activeLayerOnly: activeLayerOnly)
+                    session.startExport(format: format, options: options, downscales: upscaling ? [1] : downscales.sorted(),
+                                        activeLayerOnly: activeLayerOnly)
                 }
             }
             if !session.lastExportURLs.isEmpty {
