@@ -84,7 +84,10 @@ public final class StackCanvas {
 
     public var isStroking: Bool { stroking }
 
+    /// Même taille seulement : les textures d'affichage sont dimensionnées pour la toile d'origine.
     public func replaceStack(_ newStack: LayerStack) {
+        precondition(newStack.width == stack.width && newStack.height == stack.height,
+                     "toile de taille différente : créer un nouveau StackCanvas")
         cancelStroke()
         stack = newStack
         activeID = newStack.items.last { !$0.isGroup }!.id

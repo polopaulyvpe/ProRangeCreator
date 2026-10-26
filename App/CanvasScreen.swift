@@ -447,12 +447,18 @@ final class CanvasSession {
         strokeCancelled()
         stack = newStack
         history = UndoRedoManager(maxSteps: preferences.historyLimit)
-        if let canvas {
+        // Les textures d'affichage ont la taille de la toile : une autre résolution (projet 4K après un 8K,
+        // résolution réduite) demande une toile neuve, sinon le calque n'occupe qu'une partie de la texture.
+        if let canvas, canvas.stack.width == newStack.width, canvas.stack.height == newStack.height {
             canvas.replaceStack(newStack)
         } else {
             canvas = StackCanvas(stack: newStack, device: device)
         }
         canvas?.blendSpace = blendSpace
+        // La sélection appartient à l'ancienne toile (et peut avoir une autre taille).
+        selection = nil
+        canvas?.selection = nil
+        hasSelection = false
         activeID = canvas?.activeID ?? newStack.items.last { !$0.isGroup }!.id
         paintingMask = false
         refreshHistory()
