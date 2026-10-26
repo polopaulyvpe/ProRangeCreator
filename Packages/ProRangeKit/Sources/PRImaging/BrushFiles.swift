@@ -141,7 +141,11 @@ public enum ProcreateBrushImport {
     public static func read(data: Data, fallbackName: String) throws -> [BrushPreset] {
         let zip = try ZipArchive(data)
         // Un dossier par pinceau : celui de chaque Brush.archive ("" pour un .brush à plat).
-        let archives = zip.entries.filter { ($0.name as NSString).lastPathComponent == "Brush.archive" }
+        // Un pinceau Procreate garde aussi sa copie de réinitialisation (dossier « Reset ») : ce n'est pas un autre pinceau.
+        let archives = zip.entries.filter { entry in
+            let components = entry.name.split(separator: "/").map { $0.lowercased() }
+            return components.last == "brush.archive" && !components.contains("reset") && !components.contains("__macosx")
+        }
         guard !archives.isEmpty else { throw Failure.noBrush }
         return try archives.map { archive in
             let folder = (archive.name as NSString).deletingLastPathComponent
@@ -184,7 +188,11 @@ public enum ProcreateBrushImport {
         }
         func number(_ key: String) -> Double? { (brush[key] as? NSNumber)?.doubleValue }
 
-        if let reference = brush["name"], let index = uidIndex(reference), index < objects.count, let text = objects[index] as? String {
+        // L'index 0 de $objects est « $null » : un nom absent, pas un nom.
+        if let reference = brush["name"], let index = uidIndex(reference), index > 0, index < objects.count,
+           let text = objects[index] as? String, !text.isEmpty, text != "$null" {
+            name = text
+        } else if let text = brush["name"] as? String, !text.isEmpty {
             name = text
         }
         if let size = number("maxSize") ?? number("paintSize") {

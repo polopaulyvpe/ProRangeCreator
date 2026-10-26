@@ -87,7 +87,8 @@ final class BrushAndTimelapseTests: XCTestCase {
         let archive = try NSKeyedArchiver.archivedData(withRootObject: FakeBrush(), requiringSecureCoding: false)
         let png = try shapePNG()
         for deflate in [false, true] {
-            let data = zip([("Brush.archive", [UInt8](archive)), ("Shape.png", png), ("QuickLook/Thumbnail.png", png)], deflate: deflate)
+            let data = zip([("Brush.archive", [UInt8](archive)), ("Reset/Brush.archive", [UInt8](archive)), ("Shape.png", png),
+                            ("QuickLook/Thumbnail.png", png)], deflate: deflate)
             let presets = try ProcreateBrushImport.read(data: data, fallbackName: "fichier")
             XCTAssertEqual(presets.count, 1)
             let preset = try XCTUnwrap(presets.first)
