@@ -187,7 +187,12 @@ struct FileMenu: View {
             Button("Enregistrer", systemImage: "square.and.arrow.down") { session.saveProject() }
             Button("Ouvrir…", systemImage: "folder") { session.showProjects = true }
             Divider()
+            ImportMenuItems(session: session)
+            Divider()
             Button("Exporter…", systemImage: "square.and.arrow.up") { session.showExport = true }
+        }
+        .fileImporter(isPresented: $session.showImporter, allowedContentTypes: importableTypes, allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { session.loadImport(urls: urls) }
         }
         .sheet(isPresented: $session.showProjects) { ProjectsSheet(session: session) }
         .sheet(isPresented: $session.showExport) { ExportSheet(session: session) }

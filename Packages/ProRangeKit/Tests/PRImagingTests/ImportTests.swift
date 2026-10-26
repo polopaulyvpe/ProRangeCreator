@@ -48,6 +48,9 @@ final class ImportTests: XCTestCase {
         let hdr = try ImageDecoder.decode(exr)
         let reference = LayerRowSource(layer: layer, paper: nil).rows(0, 256)
         XCTAssertGreaterThan(psnr(hdr.pixels, reference, peak: 2.5), 60, "EXR relu avec son HDR")
+        // Chemin ImageIO (EXR en PIZ, DWAA…) : l'alpha prémultiplié doit être rétabli.
+        let viaImageIO = try XCTUnwrap(try ImageDecoder.decodeEXRWithImageIO(exr))
+        XCTAssertGreaterThan(psnr(viaImageIO.pixels, reference, peak: 2.5), 45, "EXR par ImageIO, alpha corrigé")
 
         let radiance = directory.appendingPathComponent("a.hdr")
         try PanoramaExporter.export(layer, as: .hdr, to: radiance)

@@ -141,6 +141,11 @@ final class CanvasSession {
     var activeFilter: FilterKind?
     var filterSettings = FilterSettings()
     var filterPreviewIsLive = false
+
+    // Phase 7 (voir ImportUI.swift)
+    var pendingImport: PendingImport?
+    var showImporter = false
+    var isDecodingImport = false
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -677,6 +682,12 @@ struct CanvasScreen: View {
             }
             .padding(12)
         }
+        .dropDestination(for: Data.self) { items, _ in
+            guard let data = items.first else { return false }
+            session.loadImport(data: data, name: "Glisser-déposer")
+            return true
+        }
+        .sheet(item: $session.pendingImport) { pending in ImportSheet(session: session, pending: pending) }
     }
 }
 

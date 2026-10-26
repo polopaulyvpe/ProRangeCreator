@@ -61,14 +61,31 @@ public enum ImageDecoder {
         if ext == "hdr" || ext == "pic", let image = try? RadianceReader.read(url) {
             return ImportedImage(width: image.width, height: image.height, pixels: image.pixels.map { SIMD4<Float>($0.x, $0.y, $0.z, 1) })
         }
+        if ext == "exr" {
+            // Notre lecteur (aucune compression, ZIP, ZIPS) garde l'alpha prémultiplié d'OpenEXR ; ImageIO pour le reste.
+            if let image = try? EXRReader.read(url) {
+                return ImportedImage(width: image.width, height: image.height, pixels: image.pixels)
+            }
+            if let image = try decodeEXRWithImageIO(url) { return image }
+            throw Failure.unreadable
+        }
         if let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = try decode(source) {
             return image
         }
-        if ext == "exr" {
-            let image = try EXRReader.read(url)
-            return ImportedImage(width: image.width, height: image.height, pixels: image.pixels)
-        }
         throw Failure.unreadable
+    }
+
+    /// ImageIO lit l'EXR comme un alpha droit et le prémultiplie une seconde fois : on divise une fois par alpha.
+    static func decodeEXRWithImageIO(_ url: URL) throws -> ImportedImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), var image = try decode(source) else { return nil }
+        for i in image.pixels.indices {
+            let a = image.pixels[i].w
+            if a > 0 && a < 1 {
+                let p = image.pixels[i]
+                image.pixels[i] = SIMD4<Float>(p.x / a, p.y / a, p.z / a, a)
+            }
+        }
+        return image
     }
 
     /// Données en mémoire (presse-papiers, Photos).
