@@ -33,6 +33,8 @@
 | — | 2026-10-26 | Bibliothèque intégrée : **pinceaux et tampons de peinture** seulement, sans ciels physiques ni studios | Choix de Paul (peintures à regarder, pas d'éclairage) | Tout le cahier ; pas de bibliothèque |
 | — | 2026-10-26 | Sauvegarde automatique **30 s après la dernière opération + arrière-plan**, réouverture du dernier projet au lancement | Choix de Paul ; au plus 30 s perdues en cas de plantage | Toutes les 5 min ; seulement en arrière-plan |
 | — | 2026-10-26 | Instantanés **à côté du paquet** (`Nom.instantanes/`) | L'enregistrement remplace le paquet entier (écriture atomique) | Instantanés dans le paquet |
+| — | 2026-10-26 | **Interface refaite sur le modèle de Procreate** : galerie au lancement, barre du haut (Galerie, Actions, Ajustements, Sélection, Transformation / Pinceau, Doigt, Gomme, Calques, Couleur), colonne de curseurs, panneaux flottants sombres (Actions à onglets, Couleurs à onglets, Bibliothèque avec aperçus de trait, Calques avec vignettes) | Premier retour de Paul sur l'iPad : l'ancienne interface (onglets de spike, barres de menus) était inutilisable ; il veut retrouver ses repères Procreate. Organisation reprise, mais icônes SF Symbols, couleurs et contenus propres (aucun asset de Procreate) | Garder l'interface par menus |
+| — | 2026-10-26 | Grille sphérique affichée **pendant les gestes de navigation** et messages « Annuler / Rétablir / Rien à annuler » | Sur une toile vide la sphère est uniformément blanche : sans repère, on ne voit pas la vue tourner ni l'annulation agir | Grille permanente |
 
 ## Conséquences de l'iPad Air 5
 
