@@ -11,7 +11,7 @@
 | 4 | Calques, modes de fusion, masques, budget mémoire | 🟡 pile 50 calques, 26 modes, masques, groupes, écrêtage, verrou alpha, fusion, aplatissement, projet v2 ; shader contre CPU testé pour les 26 modes ; reste la validation sur l’iPad (fluidité du chemin CPU, mémoire des 3 textures) |
 | 5 | Outils sphériques | 🟡 lots A, B et C faits ; manquent la déformation par grille, les ellipses et polygones QuickShape, le texte modifiable ; reste la validation sur l’iPad |
 | 6 | Ajustements et filtres | 🟡 fait (5 ajustements, 6 filtres, aperçu en direct, pinceau d’effet) ; manquent trame, glitch, flou de perspective, l’aperçu en direct sur le chemin CPU ; reste la validation sur l’iPad |
-| 7 | Import/export complet, import de pinceaux (D9, D10) | ⏳ |
+| 7 | Import/export complet, import de pinceaux (D9, D10) | 🟡 lot A (PNG, JPG, TIFF, orientation, cubemap, lot de résolutions) et lot B (import 3 modes, Photos, presse-papiers, glisser-déposer) faits ; reste le lot C (formes et grains, import de pinceaux Procreate et PNG, timelapse H.265) ; PIZ non écrit |
 | 8 | HDR et lumière (D11) | ⏳ |
 | 9 | Bibliothèque, galerie, préférences, finitions | ⏳ |
 

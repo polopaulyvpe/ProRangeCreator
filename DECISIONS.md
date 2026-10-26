@@ -20,6 +20,12 @@
 | — | 2026-10-26 | Flou gaussien sphérique **séparable** (σ horizontal / cos(latitude)) plutôt qu'exact | Coût linéaire en σ, temps réel sur GPU ; écart moyen < 2 % contre le flou sphérique exact hors des rangées polaires | Flou exact par voisinage angulaire (quadratique, trop lent en 8K) ; flou par cubemap (aller-retour de reprojection) |
 | — | 2026-10-26 | Ajustements calculés sur les valeurs **encodées** (comme la fusion D4), HDR conservé au-delà de 1 | Mêmes réglages visuels que Procreate ; courbes jusqu'à 16 pour les zones HDR | Ajustements en linéaire |
 | — | 2026-10-26 | « Peindre l'effet » via le **pinceau de clonage** à rotation nulle sur le résultat filtré | Réutilise un mécanisme testé ; masquage local sans calque temporaire | Masque de calque automatique |
+| — | 2026-10-26 | Phase 7 en trois lots : A export, B import, C pinceaux et timelapse | Choix de Paul | Import d'abord ; un seul bloc |
+| D9 | 2026-10-26 | Import de pinceaux : **.brush/.brushset Procreate + PNG** comme forme ou grain ; pas d'.abr. Exige d'ajouter forme et grain au moteur | Choix de Paul ; l'.abr est un binaire propriétaire mal documenté | ABR en plus ; reporter |
+| — | 2026-10-26 | Timelapse par **captures réduites après chaque opération + H.265** | Choix de Paul : fiable, indépendant des outils | Rejeu du journal (chaque outil devrait être rejouable à l'identique) |
+| — | 2026-10-26 | Orientation d'export par défaut : **Blender** | Choix de Paul | UE5 ; générique |
+| — | 2026-10-26 | Encodeurs **PNG et TIFF maison**, JPG par ImageIO | Vrai flux par bandes (ImageIO veut une image entière) ; zlib déjà présent pour l'EXR | ImageIO pour tout (pics mémoire en 16K) |
+| — | 2026-10-26 | PIZ toujours non écrit (D10 inchangé) ; à l'import, les EXR PIZ/DWAA passent par ImageIO | ImageIO sait les lire ; écrire PIZ reste un gros chantier pour peu de gain face à ZIP | Écrivain PIZ maison |
 
 ## Conséquences de l'iPad Air 5
 

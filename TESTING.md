@@ -46,6 +46,9 @@ gh run view --log-failed
 |---|---|
 | `ExportTests` | Aller-retour EXR pour toutes les variantes (half ou float, aucune ou ZIP, avec ou sans alpha, dernier bloc incomplet), exact ; ZIP plus de 2× plus petit sur un dégradé ; **relecture par ImageIO** des EXR (toutes variantes) et du Radiance ; aller-retour Radiance (pixels bruts et RLE) dans la précision RGBE ; RLE ; zlib, Adler-32 et prédicteur ; export d'un calque identique à la source, en 2 bandes, sans fichier temporaire restant ; HDR à plus de 45 dB de PSNR ; export réduit et transparent ; annulation sans fichier |
 
+| `FullExportTests` | **PNG 8/16, TIFF 16/32 et JPG relus par ImageIO** (valeurs exactes à l'arrondi près, HDR conservé en TIFF) ; orientation (lacet = décalage exact, miroir) ; cubemap : aller-retour face/direction, centre de chaque face, croix et bande ; lot de résolutions ; annulation sans fichier pour PNG, TIFF, JPG ; courbes de tone mapping |
+| `ImportTests` | Décodage PNG (linéaire), EXR (notre lecteur et ImageIO avec alpha corrigé), HDR ; panorama identique à même taille, réduction, lacet ; recadrage et marges d'une image carrée ; **aller-retour équirect → cubemap → équirect** (> 30 dB) ; croix découpée = six faces ; ordre de la bande ; détection des dispositions |
+
 ## Suites actuelles (PRStorage)
 
 | Suite | Vérifie |

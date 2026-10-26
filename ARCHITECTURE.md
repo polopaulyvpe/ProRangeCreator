@@ -186,7 +186,40 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
 - Le fichier est écrit à côté sous un nom temporaire (`.nom.partial`), puis renommé une fois complet. Annuler ou échouer le supprime.
 - La progression est donnée par bande, et le rappel peut annuler l'export.
 - Dans l'app, l'export tourne dans une tâche détachée. La feuille d'export est modale : personne ne peint pendant ce temps.
-- Orientation (préréglages Blender, UE5, Unity), cubemap, PNG, TIFF et lot de résolutions : phase 7.
+- Orientation, cubemap, PNG, JPG, TIFF et lot de résolutions : voir « Import et export complets (phase 7) ».
+
+### Import et export complets (phase 7)
+
+- **Formats d'export** (`PanoramaFormat`) :
+  - EXR et HDR comme au MVP ;
+  - **PNG 8/16 bits** (`PNGWriter`, maison) : un seul flux zlib continu (`ZlibStream`) réparti en blocs IDAT, filtre « Up », chunk sRGB, alpha droit ;
+  - **TIFF flottant 16 (half) ou 32 bits** (`TIFFWriter`, maison) : bandes de 16 lignes en Deflate, alpha associé (prémultiplié comme le calque), IFD écrit à la fin ; TIFF classique, donc refusé au-delà de 4 Gio (16K en 32 bits RGBA : utiliser EXR) ;
+  - **JPG** par ImageIO, avec un `CGDataProvider` séquentiel qui fournit les lignes à la demande. ImageIO peut garder toute l'image en mémoire pendant l'encodage : à surveiller en 16K.
+- PNG et JPG sont des formats d'écran : `DisplayTransform` (exposition, courbe écrêtage/AgX/ACES/filmique, sRGB) leur est appliqué. `ToneMapping.apply` est la copie CPU exacte des courbes du shader. EXR, HDR et TIFF restent en HDR linéaire.
+- **Orientation** (`ExportOrientation`, `OrientationPreset`) : lacet et miroir. En équirectangulaire, le lacet est arrondi au pixel et appliqué par décalage de ligne, donc sans perte.
+  - Préréglages : le devant de l'app (u = 0,5) arrive face à l'axe avant du logiciel.
+  - **Blender** : son shader met +Y (la vue de face) en u = 0,25, d'où −90°.
+  - **Unity** : le shader Skybox/Panoramic met +Z en u = 0,25, d'où −90°.
+  - **UE5** : 0°, supposé avant +X au centre, non vérifié.
+  - Ces conventions sont lues dans les shaders : à confirmer une fois dans chaque logiciel.
+- **Cubemap** (`PanoramaLayout`, `CubemapFace`) :
+  - six fichiers (_px … _nz), croix 4 × 3 ou bande 6 × 1 ;
+  - convention OpenGL (+Y en haut), dans le repère exporté (orientation comprise) ;
+  - côté de face = largeur / 4 / réduction ;
+  - échantillonnage bilinéaire du composite pleine résolution par `CompositeSampler` (cache de 96 tuiles, 96 Mo), suréchantillonné n × n quand on réduit ;
+  - les lignes sont produites face par face pour les écrivains en flux.
+- **Lot de résolutions** : `exportBatch`, un fichier par réduction, suffixé `_8K`, `_4K`…
+- Feuille d'export : format et options, calques visibles ou calque actif seul, papier, disposition, résolutions cochées, orientation (préréglage + décalage de lacet + miroir), exposition et courbe pour PNG et JPG.
+- **Import** (`ImageDecoder`, `PanoramaImport`) :
+  - décodage par ImageIO dans un contexte flottant sRGB linéaire étendu prémultiplié : PNG, JPG, HEIC, TIFF, PSD aplati, et les EXR que notre lecteur ne connaît pas ;
+  - Radiance et EXR (aucune compression, ZIP, ZIPS) par nos lecteurs ;
+  - ImageIO lit l'alpha EXR comme droit et le prémultiplie une seconde fois : on le corrige ;
+  - image entière en mémoire, plafond 16K × 8K.
+- Les trois modes, chacun sur un nouveau calque, en une entrée d'historique :
+  - **A, panorama** : rééchantillonné à la taille du projet, avec moyenne de n × n points quand on réduit et bouclage horizontal. Si l'image n'est pas en 2:1 : recadrage, marges transparentes ou étirement. Rotation au choix.
+  - **B, image plate** : `placeImage` (projection rectiligne face au centre de la vue), avec la largeur angulaire au choix.
+  - **C, cubemap** : six fichiers (ordre déduit des noms px/posx/right…), croix horizontale ou verticale, ou bande, détectée d'après les proportions ; reconversion par `CubemapFace.locate`.
+- Sources d'import : fichier (sélection multiple pour six faces), Photos, presse-papiers, glisser-déposer sur la toile.
 
 ### Projets dans l'app
 
