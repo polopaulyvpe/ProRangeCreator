@@ -191,7 +191,7 @@ struct LayersPanel: View {
         }
         .padding(18)
         .background(Color(white: 0.2))
-        .environment(.colorScheme, .dark)
+        .environment(\.colorScheme, .dark)
         .presentationCompactAdaptation(.popover)
         .onAppear { opacity = Double(session.activeItem?.opacity ?? 1) }
         .onChange(of: session.activeID) { opacity = Double(session.activeItem?.opacity ?? 1) }
