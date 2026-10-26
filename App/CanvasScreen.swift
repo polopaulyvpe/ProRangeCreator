@@ -142,10 +142,12 @@ final class CanvasSession {
     var filterSettings = FilterSettings()
     var filterPreviewIsLive = false
 
-    // Phase 7 (voir ImportUI.swift)
+    // Phase 7 (voir ImportUI.swift, BrushLibraryUI.swift)
     var pendingImport: PendingImport?
     var showImporter = false
     var isDecodingImport = false
+    var showBrushLibrary = false
+    @ObservationIgnored var previousDabCenter: Vec3?
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -231,9 +233,10 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
-    func dab(at center: Vec3, pressure: Double) -> SphericalDab {
+    func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0) -> SphericalDab {
         let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
-        return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase)
+        return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase,
+                            strokeAngle: strokeAngle)
     }
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
@@ -269,6 +272,7 @@ final class CanvasSession {
         canvas.forceCPU = tool.needsCPU
         canvas.beginStroke()
         if tool == .brush { rememberColor() }
+        previousDabCenter = nil
         let centers = sampler.begin(at: d)
         switch tool {
         case .smudge, .liquify:
@@ -314,8 +318,19 @@ final class CanvasSession {
     }
 
     /// Dabs du trait et leurs copies par symétrie.
+    /// Chaque copie garde l'angle de son propre trait (les reflets tournent dans l'autre sens).
     func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
-        centers.flatMap { symmetry.images(of: $0) }.map { dab(at: $0, pressure: pressure) }
+        var dabs: [SphericalDab] = []
+        for center in centers {
+            let images = symmetry.images(of: center)
+            let previous = symmetry.images(of: previousDabCenter ?? center)
+            for (i, image) in images.enumerated() {
+                let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
+                dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle))
+            }
+            previousDabCenter = center
+        }
+        return dabs
     }
 
     func strokeEnded() {

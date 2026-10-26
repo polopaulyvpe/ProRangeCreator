@@ -15,17 +15,58 @@ public final class BrushEngine {
         var params: SIMD4<Float>   // dureté, taille angulaire d'un texel, cos(portée), mode (0 peindre, 1 effacer)
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, opacité
         var options: SIMD4<Float>  // espace de fusion (0 perceptuel, 1 linéaire), verrou alpha, inutilisés
+        var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
+        var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, inutilisés
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
     public let device: any MTLDevice
     private let pipeline: any MTLComputePipelineState
+    private let clampSampler: any MTLSamplerState
+    private let repeatSampler: any MTLSamplerState
+    /// Texture 1 × 1 blanche liée quand le dab n'a pas de forme ou de grain.
+    private let blank: any MTLTexture
+    private var tipTextures: [BrushTexture: any MTLTexture] = [:]
 
     public init(device: any MTLDevice) throws {
         self.device = device
         let library = try device.makeLibrary(source: Self.source, options: nil)
         guard let function = library.makeFunction(name: "stampDab") else { throw Failure.noFunction }
         pipeline = try device.makeComputePipelineState(function: function)
+        func sampler(_ mode: MTLSamplerAddressMode) throws -> any MTLSamplerState {
+            let desc = MTLSamplerDescriptor()
+            desc.minFilter = .linear
+            desc.magFilter = .linear
+            desc.sAddressMode = mode
+            desc.tAddressMode = mode
+            guard let state = device.makeSamplerState(descriptor: desc) else { throw Failure.noFunction }
+            return state
+        }
+        clampSampler = try sampler(.clampToEdge)
+        repeatSampler = try sampler(.repeat)
+        blank = try Self.makeTexture(device: device, BrushTexture(name: "blanc", size: 1, values: [1]))
+    }
+
+    private static func makeTexture(device: any MTLDevice, _ texture: BrushTexture) throws -> any MTLTexture {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: texture.size, height: texture.size, mipmapped: false)
+        desc.usage = .shaderRead
+        desc.storageMode = .shared
+        guard let gpu = device.makeTexture(descriptor: desc) else { throw Failure.noFunction }
+        texture.values.withUnsafeBytes { raw in
+            gpu.replace(region: MTLRegionMake2D(0, 0, texture.size, texture.size), mipmapLevel: 0,
+                        withBytes: raw.baseAddress!, bytesPerRow: texture.size * 4)
+        }
+        return gpu
+    }
+
+    /// Texture GPU d'une forme ou d'un grain (créée une fois, gardée tant que le moteur vit ; au plus 16).
+    private func gpuTexture(_ texture: BrushTexture?) -> any MTLTexture {
+        guard let texture else { return blank }
+        if let cached = tipTextures[texture] { return cached }
+        if tipTextures.count >= 16 { tipTextures.removeAll() }
+        let gpu = (try? Self.makeTexture(device: device, texture)) ?? blank
+        tipTextures[texture] = gpu
+        return gpu
     }
 
     /// Encode les dabs, dans l'ordre, sur `texture` (RGBA16F lecture/écriture). Renvoie les tuiles touchées.
@@ -38,6 +79,8 @@ public final class BrushEngine {
         var touched = Set<TileCoord>()
         encoder.setComputePipelineState(pipeline)
         encoder.setTexture(texture, index: 0)
+        encoder.setSamplerState(clampSampler, index: 0)
+        encoder.setSamplerState(repeatSampler, index: 1)
         let group = MTLSize(width: 16, height: 16, depth: 1)
         for dab in dabs {
             let evaluator = DabEvaluator(dab, pixelAngle: pixelAngle)
@@ -49,11 +92,18 @@ public final class BrushEngine {
             let params = SIMD4<Float>(Float(dab.hardness), Float(pixelAngle), Float(cos(evaluator.reach)), modeFlag)
             let spaceFlag: Float = space == .linear ? 1 : 0
             let lockFlag: Float = alphaLock ? 1 : 0
+            let tip = dab.tip
+            let rotation = tip?.rotation ?? 0
+            let tipVector = SIMD4<Float>(Float(cos(rotation)), Float(sin(rotation)),
+                                         tip?.shape != nil ? 1 : 0, tip?.grain != nil ? 1 : 0)
+            let grainVector = SIMD4<Float>(Float(1 / (tip?.grainScale ?? 1)), Float(tip?.grainDepth ?? 0), 0, 0)
+            encoder.setTexture(gpuTexture(tip?.shape), index: 1)
+            encoder.setTexture(gpuTexture(tip?.grain), index: 2)
             for columns in span.columns {
                 let region = SIMD4<Int32>(Int32(columns.lowerBound), Int32(span.rows.lowerBound),
                                           Int32(columns.count), Int32(span.rows.count))
                 var gpu = GPUDab(center: center, params: params, color: dab.color,
-                                 options: SIMD4<Float>(spaceFlag, lockFlag, 0, 0), region: region)
+                                 options: SIMD4<Float>(spaceFlag, lockFlag, 0, 0), tip: tipVector, grain: grainVector, region: region)
                 encoder.setBytes(&gpu, length: MemoryLayout<GPUDab>.stride, index: 0)
                 let groups = MTLSize(width: (columns.count + group.width - 1) / group.width,
                                      height: (span.rows.count + group.height - 1) / group.height, depth: 1)
@@ -77,6 +127,8 @@ public final class BrushEngine {
         float4 params;
         float4 color;
         float4 options;
+        float4 tip;
+        float4 grain;
         int4 region;
     };
 
@@ -105,6 +157,10 @@ public final class BrushEngine {
     }
 
     kernel void stampDab(texture2d<float, access::read_write> layer [[texture(0)]],
+                         texture2d<float> shape [[texture(1)]],
+                         texture2d<float> grain [[texture(2)]],
+                         sampler clampSampler [[sampler(0)]],
+                         sampler repeatSampler [[sampler(1)]],
                          constant Dab& dab [[buffer(0)]],
                          uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= uint(dab.region.z) || gid.y >= uint(dab.region.w)) { return; }
@@ -121,10 +177,38 @@ public final class BrushEngine {
         float3 c = dab.center.xyz;
         float cosA = dot(c, d);
         if (cosA < dab.params.z) { return; }
-        float sinA = length(d - c * cosA);
+        float3 tangent = d - c * cosA;
+        float sinA = length(tangent);
         float distance = atan2(sinA, cosA);
-        float a = coverage(distance, dab.center.w, dab.params.x, dab.params.y);
+        float a;
+        if (dab.tip.z > 0.5) {
+            // Forme : coordonnées du plan tangent (azimutal équidistant), tournées, ramenées au carré [-1, 1]².
+            float3 east = cross(c, float3(0.0, 1.0, 0.0));
+            east = length(east) < 1e-6 ? float3(1.0, 0.0, 0.0) : normalize(east);
+            float3 north = cross(east, c);
+            float k = sinA > 1e-7 ? distance / sinA : 1.0;
+            float px = dot(tangent, east) * k;
+            float py = dot(tangent, north) * k;
+            float qx = (px * dab.tip.x + py * dab.tip.y) / dab.center.w;
+            float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w;
+            if (abs(qx) > 1.0 || abs(qy) > 1.0) { return; }
+            a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5)).r;
+        } else {
+            a = coverage(distance, dab.center.w, dab.params.x, dab.params.y);
+        }
         if (a <= 0.0) { return; }
+        if (dab.tip.w > 0.5) {
+            // Grain fixé à la sphère : trois projections planes mélangées (poids |d|^4).
+            float3 w = abs(d);
+            w = w * w;
+            w = w * w;
+            w /= (w.x + w.y + w.z);
+            float s = dab.grain.x;
+            float g = w.x * grain.sample(repeatSampler, d.yz * s).r
+                    + w.y * grain.sample(repeatSampler, d.xz * s).r
+                    + w.z * grain.sample(repeatSampler, d.xy * s).r;
+            a *= 1.0 - dab.grain.y * (1.0 - g);
+        }
 
         uint2 p = uint2(x, y);
         float4 dst = layer.read(p);

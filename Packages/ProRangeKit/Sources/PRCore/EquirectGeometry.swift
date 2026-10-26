@@ -55,7 +55,9 @@ public struct DabEvaluator: Sendable {
         self.dab = dab
         self.frame = TangentFrame(center: dab.center)
         self.pixelAngle = pixelAngle
-        self.reach = dab.radius + pixelAngle
+        // Une forme occupe le carré circonscrit au disque : sa portée va jusqu'aux coins.
+        let extent = dab.tip?.shape != nil ? dab.radius * 2.0.squareRoot() : dab.radius
+        self.reach = extent + pixelAngle
         self.cosReach = cos(reach)
     }
 
@@ -67,8 +69,15 @@ public struct DabEvaluator: Sendable {
     @inline(__always)
     public func coverage(at d: Vec3) -> Float {
         if simd_dot(d, frame.center) < cosReach { return 0 }
-        let distance = simd_length(frame.project(d))
-        return Float(SphericalRasterizer.coverage(distance: distance, radius: dab.radius,
+        let p = frame.project(d)
+        guard let tip = dab.tip else {
+            return Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
+                                                      hardness: dab.hardness, pixelSize: pixelAngle))
+        }
+        let base = tip.shapeValue(at: p, radius: dab.radius)
+            ?? Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
                                                   hardness: dab.hardness, pixelSize: pixelAngle))
+        guard base > 0, tip.grain != nil else { return base }
+        return base * (1 - Float(tip.grainDepth) * (1 - tip.grainValue(at: d)))
     }
 }

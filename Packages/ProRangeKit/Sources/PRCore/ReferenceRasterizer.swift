@@ -58,13 +58,16 @@ public struct SphericalDab: Sendable {
     /// RGB linéaire non prémultiplié ; `w` = opacité.
     public var color: SIMD4<Float>
     public var mode: DabMode
+    /// Forme, grain et rotation ; nil = dab rond classique.
+    public var tip: DabTip?
 
-    public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>, mode: DabMode = .paint) {
+    public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>, mode: DabMode = .paint, tip: DabTip? = nil) {
         self.center = center
         self.radius = radius
         self.hardness = hardness
         self.color = color
         self.mode = mode
+        self.tip = tip
     }
 }
 
