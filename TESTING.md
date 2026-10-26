@@ -27,6 +27,8 @@ gh run view --log-failed
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
 | `AdjustmentTests` | Courbe identité, monotone, passant par ses points, prolongée en HDR ; ajustements neutres, désaturation, inversion, dégradé, recoloration (hors tolérance intacte), teinte HDR, balance ; bruit sphérique déterministe, continu sur la couture, uniforme |
 | `BrushTipTests` | Échantillonnage bilinéaire (centres de texels, répétition) ; forme sur la sphère (côtés, coins du carré, hors carré), demi-tour ; grain (profondeur, continuité sur la couture) ; réglages → pointe et angle du trait |
+| `PreferencesTests` | Aller-retour JSON ; champ inconnu, manquant ou illisible sans perte des autres ; courbe de pression (linéaire, ferme, douce, bornes) |
+| `BuiltInBrushesTests` | Catalogue complet (catégories, identifiants uniques), textures ni vides ni pleines et dans [0, 1] ; tampon soleil (cœur, halo) et silhouette de collines (pleine en bas, vide en haut) sur la sphère |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
 ## Suites actuelles (PREngine) — sautées sans GPU
@@ -63,6 +65,7 @@ gh run view --log-failed
 | `SelectionMaskTests` | Sélections par formes depuis deux vues, ajout, retrait, inversion, effacement ; adoucissement ; sélection automatique ; pinceau limité à la sélection ; contrainte d'une opération ; transformation du contenu et de la sélection ; copie masquée |
 | `SpatialToolTests` | Remplissage dans un anneau, à travers la couture et le pôle, seuil ; dégradé radial ; clonage par rotation ; doigt qui traîne la couleur ; rotation CPU ; entrée d'historique multi-calques |
 | `FilterReferenceTests` | Ajustement limité aux tuiles peintes et journalisé ; **flou séparable contre vrai flou sphérique** ; aplat conservé par le flou ; bruit (transparent intact, grain, monochrome) |
+| `ProjectLibraryTests` | Noms nettoyés et numérotés ; duplication et renommage avec leurs instantanés ; dossiers d'instantanés hors de la liste des projets ; suppression complète ; un instantané garde son contenu quand le projet est réenregistré |
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
 | `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |

@@ -13,7 +13,7 @@
 | 6 | Ajustements et filtres | 🟡 fait (5 ajustements, 6 filtres, aperçu en direct, pinceau d’effet) ; manquent trame, glitch, flou de perspective, l’aperçu en direct sur le chemin CPU ; reste la validation sur l’iPad |
 | 7 | Import/export complet, import de pinceaux (D9, D10) | 🟡 lot A (PNG, JPG, TIFF, orientation, cubemap, lot de résolutions) et lot B (import 3 modes, Photos, presse-papiers, glisser-déposer) faits ; lot C (forme et grain du pinceau, import .brush/.brushset et PNG, bibliothèque .prbrush, timelapse H.265) fait ; PIZ non écrit ; clés Procreate à vérifier sur de vrais pinceaux ; reste la validation sur l'iPad |
 | 8 | HDR et lumière (D11) | ⏭️ abandonnée : Paul peint des panoramas à regarder, pas des HDRI d'éclairage (voir DECISIONS) |
-| 9 | Bibliothèque, galerie, préférences, finitions | ⏳ |
+| 9 | Bibliothèque, galerie, préférences, finitions | 🟡 galerie à vignettes, sauvegarde automatique et réouverture, instantanés, préférences (thème, gaucher, pression, gestes, défauts), interface masquable, 16 pinceaux et tampons intégrés faits ; sans ciels physiques ni studios (choix) ; passe de performance impossible sans l'iPad ; reste la validation sur l'iPad |
 
 ## Démo du spike (à faire par Paul sur l'iPad)
 

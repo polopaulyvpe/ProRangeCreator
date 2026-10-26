@@ -29,6 +29,10 @@
 | — | 2026-10-26 | Forme dans le **plan tangent** du dab ; grain **triplanaire fixé à la sphère** | Forme sans distorsion à toute latitude ; le grain doit tenir à la toile comme le « grain texturé » de Procreate, sans couture ni pôle | Grain dans le repère du dab (glisse avec le trait) ; grain en équirectangulaire (étiré aux pôles) |
 | — | 2026-10-26 | Format natif nommé **.prbrush** (le cahier disait `.zenithbrush`) | Le nom de l'app est ProRange Creator (D8) | .zenithbrush |
 | — | 2026-10-26 | **Phase 8 abandonnée** (curseur EV, calques de lumière, aperçu d'éclairage, histogramme, sonde, zébrures) ; D11 sans objet | Choix de Paul : les maps sont des peintures 360° à regarder (fonds, skyboxes), pas des sources d'éclairage ; ces outils servent à doser une lumière physique. Le curseur EV reste faisable en moins d'une heure si besoin | Phase 8 complète ; curseur EV seul |
+| — | 2026-10-26 | Phase 9 en trois lots : A fichiers, B interface, C bibliothèque | Choix de Paul | Bibliothèque d'abord ; un seul bloc |
+| — | 2026-10-26 | Bibliothèque intégrée : **pinceaux et tampons de peinture** seulement, sans ciels physiques ni studios | Choix de Paul (peintures à regarder, pas d'éclairage) | Tout le cahier ; pas de bibliothèque |
+| — | 2026-10-26 | Sauvegarde automatique **30 s après la dernière opération + arrière-plan**, réouverture du dernier projet au lancement | Choix de Paul ; au plus 30 s perdues en cas de plantage | Toutes les 5 min ; seulement en arrière-plan |
+| — | 2026-10-26 | Instantanés **à côté du paquet** (`Nom.instantanes/`) | L'enregistrement remplace le paquet entier (écriture atomique) | Instantanés dans le paquet |
 
 ## Conséquences de l'iPad Air 5
 
