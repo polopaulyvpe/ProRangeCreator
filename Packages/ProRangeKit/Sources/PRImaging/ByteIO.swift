@@ -69,9 +69,9 @@ enum Zlib {
         case sizeMismatch
     }
 
-    /// Renvoie `nil` si la compression ne fait pas gagner de place.
-    static func compress(_ input: [UInt8]) -> [UInt8]? {
-        guard !input.isEmpty else { return nil }
+    /// Renvoie `nil` si la compression ne fait pas gagner de place (sauf avec `always`, exigé par TIFF).
+    static func compress(_ input: [UInt8], always: Bool = false) -> [UInt8]? {
+        guard !input.isEmpty else { return always ? [0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01] : nil }
         let capacity = input.count + input.count / 16 + 1024
         var deflated = [UInt8](repeating: 0, count: capacity)
         let written = input.withUnsafeBufferPointer { src in
@@ -79,7 +79,7 @@ enum Zlib {
                 compression_encode_buffer(dst.baseAddress!, capacity, src.baseAddress!, input.count, nil, COMPRESSION_ZLIB)
             }
         }
-        guard written > 0, written + 6 < input.count else { return nil }
+        guard written > 0, always || written + 6 < input.count else { return nil }
         var out: [UInt8] = [0x78, 0x9C]
         out.append(contentsOf: deflated[0..<written])
         let checksum = adler32(input)

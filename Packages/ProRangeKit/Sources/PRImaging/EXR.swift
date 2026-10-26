@@ -9,6 +9,8 @@ public typealias ExportProgress = (Double) -> Bool
 public enum ExportError: Error, Equatable {
     case cancelled
     case invalidDimensions
+    /// Trop grand pour le format (TIFF classique : 4 Gio).
+    case tooLarge
 }
 
 public enum EXRPixelType: String, CaseIterable, Sendable {

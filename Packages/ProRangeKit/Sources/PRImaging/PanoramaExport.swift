@@ -6,11 +6,28 @@ import PRStorage
 public enum PanoramaFormat: Hashable, Sendable {
     case exr(EXRPixelType, EXRCompression, includeAlpha: Bool)
     case hdr
+    /// PNG 8 ou 16 bits, valeurs d'écran (exposition, courbe et sRGB de `PanoramaExportOptions.display`).
+    case png(bitDepth: Int, includeAlpha: Bool)
+    /// JPG, valeurs d'écran, sans alpha ; qualité dans [0, 1].
+    case jpeg(quality: Double)
+    /// TIFF flottant 16 (half) ou 32 bits, linéaire, alpha associé.
+    case tiff(bitsPerSample: Int, includeAlpha: Bool)
 
     public var fileExtension: String {
         switch self {
         case .exr: "exr"
         case .hdr: "hdr"
+        case .png: "png"
+        case .jpeg: "jpg"
+        case .tiff: "tif"
+        }
+    }
+
+    /// Format d'écran (8/16 bits entiers) : on y applique `DisplayTransform` ; les autres gardent le HDR linéaire.
+    public var isDisplayReferred: Bool {
+        switch self {
+        case .png, .jpeg: true
+        case .exr, .hdr, .tiff: false
         }
     }
 }
@@ -20,10 +37,18 @@ public struct PanoramaExportOptions: Sendable {
     public var downscale: Int
     /// Papier composé sous le calque (blanc par défaut) ; `nil` = fond transparent.
     public var paper: SIMD3<Float>?
+    public var orientation: ExportOrientation
+    public var layout: PanoramaLayout
+    /// Exposition et courbe des formats d'écran (PNG, JPG).
+    public var display: DisplayTransform
 
-    public init(downscale: Int = 1, paper: SIMD3<Float>? = [1, 1, 1]) {
+    public init(downscale: Int = 1, paper: SIMD3<Float>? = [1, 1, 1], orientation: ExportOrientation = .identity,
+                layout: PanoramaLayout = .equirectangular, display: DisplayTransform = DisplayTransform()) {
         self.downscale = downscale
         self.paper = paper
+        self.orientation = orientation
+        self.layout = layout
+        self.display = display
     }
 }
 
@@ -55,6 +80,10 @@ public struct LayerRowSource {
                                items: [StackItem(kind: .layer(layer), name: layer.name)])
         self.init(stack: stack, downscale: downscale, paper: paper)
     }
+
+    /// Tuile composée à pleine résolution (nil si vide : la valeur est alors `emptyValue`), pour un accès aléatoire.
+    public func compositeTile(_ coord: TileCoord) -> [SIMD4<Float>]? { tile(coord) }
+    public var emptyValue: SIMD4<Float> { empty }
 
     public var width: Int { sourceWidth / downscale }
     public var height: Int { sourceHeight / downscale }
@@ -105,29 +134,93 @@ public struct LayerRowSource {
     }
 }
 
-/// Export d'un calque en EXR ou HDR, en flux par bandes de 256 lignes, avec progression et annulation.
-/// Le fichier n'apparaît qu'une fois complet (écriture dans un fichier temporaire voisin).
+/// Export en flux par bandes de 256 lignes, avec progression et annulation, dans tous les formats et dispositions.
+/// Chaque fichier n'apparaît qu'une fois complet (écriture dans un fichier temporaire voisin).
 public enum PanoramaExporter {
+    @discardableResult
     public static func export(_ layer: TiledLayer, as format: PanoramaFormat, options: PanoramaExportOptions = .init(),
-                              to url: URL, progress: ExportProgress = { _ in true }) throws {
-        try export(LayerRowSource(layer: layer, downscale: options.downscale, paper: options.paper), as: format, to: url, progress: progress)
+                              to url: URL, progress: @escaping ExportProgress = { _ in true }) throws -> [URL] {
+        try export(LayerRowSource(layer: layer, downscale: options.downscale, paper: options.paper),
+                   as: format, options: options, to: url, progress: progress)
     }
 
     /// Export de toute la pile (calques visibles, modes, masques, groupes).
+    @discardableResult
     public static func export(_ stack: LayerStack, as format: PanoramaFormat, options: PanoramaExportOptions = .init(),
-                              space: BlendSpace = .perceptual, to url: URL, progress: ExportProgress = { _ in true }) throws {
+                              space: BlendSpace = .perceptual, to url: URL, progress: @escaping ExportProgress = { _ in true }) throws -> [URL] {
         try export(LayerRowSource(stack: stack, downscale: options.downscale, paper: options.paper, space: space),
-                   as: format, to: url, progress: progress)
+                   as: format, options: options, to: url, progress: progress)
     }
 
-    static func export(_ source: LayerRowSource, as format: PanoramaFormat, to url: URL, progress: ExportProgress) throws {
+    /// Plusieurs résolutions d'un coup (lot 1K, 2K, 4K…) : un fichier par réduction, suffixé de sa largeur (`_4K`).
+    @discardableResult
+    public static func exportBatch(_ stack: LayerStack, as format: PanoramaFormat, options: PanoramaExportOptions = .init(),
+                                   downscales: [Int], space: BlendSpace = .perceptual, to url: URL,
+                                   progress: @escaping ExportProgress = { _ in true }) throws -> [URL] {
+        var urls: [URL] = []
+        let total = Double(downscales.count)
+        for (i, downscale) in downscales.enumerated() {
+            var single = options
+            single.downscale = downscale
+            let name = url.deletingPathExtension().lastPathComponent + "_" + resolutionLabel(stack.width / downscale)
+            let target = url.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(url.pathExtension)
+            urls += try export(stack, as: format, options: single, space: space, to: target) { p in
+                progress((Double(i) + p) / total)
+            }
+        }
+        return urls
+    }
+
+    /// « 16K », « 4K », « 512 » : largeur d'un panorama.
+    public static func resolutionLabel(_ width: Int) -> String {
+        width >= 1024 && width % 1024 == 0 ? "\(width / 1024)K" : "\(width)"
+    }
+
+    static func export(_ source: LayerRowSource, as format: PanoramaFormat, options: PanoramaExportOptions,
+                       to url: URL, progress: @escaping ExportProgress) throws -> [URL] {
+        switch options.layout {
+        case .equirectangular:
+            let (width, height, rows) = LayoutSource.equirectangular(source, orientation: options.orientation)
+            try write(width: width, height: height, rows: rows, as: format, display: options.display, to: url, progress: progress)
+            return [url]
+        case .cubeFaces:
+            var urls: [URL] = []
+            let base = url.deletingPathExtension().lastPathComponent
+            for face in CubemapFace.allCases {
+                let target = url.deletingLastPathComponent().appendingPathComponent("\(base)_\(face.suffix)")
+                    .appendingPathExtension(url.pathExtension)
+                let (width, height, rows) = LayoutSource.face(face, source, orientation: options.orientation)
+                try write(width: width, height: height, rows: rows, as: format, display: options.display, to: target) { p in
+                    progress((Double(face.rawValue) + p) / 6)
+                }
+                urls.append(target)
+            }
+            return urls
+        case .cubeCross, .cubeStrip:
+            let (width, height, rows) = LayoutSource.assembled(options.layout, source, orientation: options.orientation)
+            try write(width: width, height: height, rows: rows, as: format, display: options.display, to: url, progress: progress)
+            return [url]
+        }
+    }
+
+    static func write(width: Int, height: Int, rows: @escaping RowProvider, as format: PanoramaFormat, display: DisplayTransform,
+                      to url: URL, progress: @escaping ExportProgress) throws {
         let partial = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).partial")
+        let encoded: RowProvider = { y, count in try rows(y, count).map { display.encode($0) } }
         switch format {
         case let .exr(pixelType, compression, includeAlpha):
-            try EXRWriter.write(to: partial, width: source.width, height: source.height, pixelType: pixelType,
-                                compression: compression, includeAlpha: includeAlpha, rows: source.rows, progress: progress)
+            try EXRWriter.write(to: partial, width: width, height: height, pixelType: pixelType,
+                                compression: compression, includeAlpha: includeAlpha, rows: rows, progress: progress)
         case .hdr:
-            try RadianceWriter.write(to: partial, width: source.width, height: source.height, rows: source.rows, progress: progress)
+            try RadianceWriter.write(to: partial, width: width, height: height, rows: rows, progress: progress)
+        case let .png(bitDepth, includeAlpha):
+            try PNGWriter.write(to: partial, width: width, height: height, bitDepth: bitDepth, includeAlpha: includeAlpha,
+                                rows: encoded, progress: progress)
+        case let .jpeg(quality):
+            try JPEGWriter.write(to: partial, width: width, height: height, quality: quality, rows: encoded, progress: progress)
+        case let .tiff(bitsPerSample, includeAlpha):
+            try TIFFWriter.write(to: partial, width: width, height: height, bitsPerSample: bitsPerSample,
+                                 includeAlpha: includeAlpha, rows: rows, progress: progress)
         }
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
         try FileManager.default.moveItem(at: partial, to: url)
