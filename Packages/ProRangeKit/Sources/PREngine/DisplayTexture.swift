@@ -15,6 +15,9 @@ public final class DisplayTexture {
     /// Pixels de calque par pixel d'affichage, sur chaque axe.
     public let factor: Int
     private var mipmapsDirty = true
+    /// Dernière tuile de valeur unique préparée par `fill`.
+    private var fillValue: SIMD4<Float>?
+    private var fillData: [Float16] = []
     private let tileSide: Int
 
     public init(device: any MTLDevice, layerWidth: Int, maxWidth: Int = 8192) throws {
@@ -40,17 +43,28 @@ public final class DisplayTexture {
     /// À appeler quand le contenu du niveau 0 a changé sur le GPU (pinceau).
     public func markChanged() { mipmapsDirty = true }
 
-    /// Recopie tout le calque.
     /// Tout le calque : tuiles vides remplies d'un coup, tuiles peintes décodées en parallèle (lecture seule), par paquets.
     public func uploadAll(_ layer: TiledLayer) {
-        var stored: [TileCoord] = []
+        var coords: [TileCoord] = []
         for ty in 0..<layer.tilesDown {
-            for tx in 0..<layer.tilesAcross {
-                let coord = TileCoord(x: tx, y: ty)
-                if layer.isStored(coord) { stored.append(coord) } else { fill(coord, with: .zero) }
-            }
+            for tx in 0..<layer.tilesAcross { coords.append(TileCoord(x: tx, y: ty)) }
         }
+        upload(layer, tiles: coords)
+    }
+
+    /// Recopie les tuiles données depuis le calque CPU.
+    public func upload(_ layer: TiledLayer, tiles: some Sequence<TileCoord>) {
+        var stored: [TileCoord] = []
+        for coord in tiles {
+            if layer.isStored(coord) { stored.append(coord) } else { fill(coord, with: .zero) }
+        }
+        uploadStored(layer, stored)
+    }
+
+    /// Tuiles peintes : décodées en parallèle (lecture seule du calque), par paquets, puis envoyées au GPU.
+    private func uploadStored(_ layer: TiledLayer, _ stored: [TileCoord]) {
         let side = tileSide
+        // Mêmes octets que le calque : copie directe, exacte.
         let direct = factor == 1 && layer.format == .rgba16Float
         let chunk = 64
         var start = 0
@@ -79,28 +93,6 @@ public final class DisplayTexture {
         }
     }
 
-    /// Recopie les tuiles données depuis le calque CPU.
-    public func upload(_ layer: TiledLayer, tiles: some Sequence<TileCoord>) {
-        for coord in tiles {
-            let region = MTLRegionMake2D(coord.x * tileSide, coord.y * tileSide, tileSide, tileSide)
-            guard region.origin.x + tileSide <= texture.width, region.origin.y + tileSide <= texture.height else { continue }
-            let pixels: [Float16]
-            if !layer.isStored(coord) {
-                pixels = [Float16](repeating: 0, count: tileSide * tileSide * 4)
-            } else if factor == 1, layer.format == .rgba16Float {
-                // Mêmes octets que le calque : copie directe, exacte.
-                let bytes = layer.tileBytes(coord)
-                pixels = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
-            } else {
-                pixels = reduce(layer.tileFloatPixels(coord))
-            }
-            pixels.withUnsafeBytes { raw in
-                texture.replace(region: region, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: tileSide * 8)
-            }
-            mipmapsDirty = true
-        }
-    }
-
     /// Envoie une tuile de pixels déjà composés (RGBA linéaire prémultiplié, `TileSize.side` de côté).
     public func upload(_ coord: TileCoord, pixels: [SIMD4<Float>]) {
         let region = MTLRegionMake2D(coord.x * tileSide, coord.y * tileSide, tileSide, tileSide)
@@ -116,15 +108,20 @@ public final class DisplayTexture {
     public func fill(_ coord: TileCoord, with value: SIMD4<Float>) {
         let region = MTLRegionMake2D(coord.x * tileSide, coord.y * tileSide, tileSide, tileSide)
         guard region.origin.x + tileSide <= texture.width, region.origin.y + tileSide <= texture.height else { return }
-        var data = [Float16](repeating: 0, count: tileSide * tileSide * 4)
-        let px = [Float16(value.x), Float16(value.y), Float16(value.z), Float16(value.w)]
-        for i in stride(from: 0, to: data.count, by: 4) {
-            data[i] = px[0]
-            data[i + 1] = px[1]
-            data[i + 2] = px[2]
-            data[i + 3] = px[3]
+        // Une tuile de valeur unique ne change que si la valeur change : préparée une fois, réutilisée (vide, papier…).
+        if fillValue != value {
+            var data = [Float16](repeating: 0, count: tileSide * tileSide * 4)
+            let px = [Float16(value.x), Float16(value.y), Float16(value.z), Float16(value.w)]
+            for i in stride(from: 0, to: data.count, by: 4) {
+                data[i] = px[0]
+                data[i + 1] = px[1]
+                data[i + 2] = px[2]
+                data[i + 3] = px[3]
+            }
+            fillData = data
+            fillValue = value
         }
-        data.withUnsafeBytes { raw in
+        fillData.withUnsafeBytes { raw in
             texture.replace(region: region, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: tileSide * 8)
         }
         mipmapsDirty = true

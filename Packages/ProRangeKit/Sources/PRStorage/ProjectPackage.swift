@@ -53,6 +53,8 @@ public enum ProjectPackage {
         if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
 
+        // Tuiles en clair compressées une fois et gardées compressées : la sauvegarde suivante n'a qu'à écrire.
+        for layer in layers { layer.packResidentTiles() }
         for layer in layers {
             let store = try TileStore(baseURL: staging.appendingPathComponent("layers/\(layer.id.uuidString)"))
             // Compression et écriture des tuiles en parallèle (lecture seule du calque, un fichier par tuile).

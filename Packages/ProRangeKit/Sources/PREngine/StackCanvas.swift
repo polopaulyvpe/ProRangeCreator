@@ -230,7 +230,7 @@ public final class StackCanvas {
         }
         waitForGPU()
         target.beginOperation()
-        for coord in strokeTiles { target.replaceTile(coord, with: active.readTile(coord)) }
+        target.replaceTiles(strokeTiles.map { (coord: $0, bytes: active.readTile($0)) })
         strokeTiles = []
         return (target.id, target.endOperation())
     }
@@ -330,9 +330,43 @@ public final class StackCanvas {
         recomposite(Set(allTiles))
     }
 
+    /// Compositeur GPU des caches (créé à la première recomposition) ; nil sans GPU.
+    private lazy var gpuCompositor: GPUCompositor? = {
+        guard let queue else { return nil }
+        return GPUCompositor(device: queue.device, queue: queue)
+    }()
+
+    /// Recomposition sur le GPU quand la pile s'y prête (calques simples, caches pleine résolution). Faux sinon : CPU.
+    private func recompositeOnGPU(_ tiles: Set<TileCoord>) -> Bool {
+        guard let below, below.isFullResolution, let gpu = gpuCompositor else { return false }
+        let roots = stack.children(of: nil)
+        let paperPixel = SIMD4<Float>(paper.x, paper.y, paper.z, 1)
+        let list = Array(tiles)
+        if usesFastPath {
+            guard let index = rootIndexOfActive, let above else { return false }
+            let lower = Array(roots[0..<index])
+            let upper = Array(roots[(index + 1)...])
+            guard GPUCompositor.supports(lower), GPUCompositor.supports(upper) else { return false }
+            waitForGPU()
+            gpu.composite(lower, base: paperPixel, space: blendSpace, tiles: list, into: below.texture)
+            below.markChanged()
+            if !aboveIsEmpty {
+                gpu.composite(upper, base: .zero, space: blendSpace, tiles: list, into: above.texture)
+                above.markChanged()
+            }
+            return true
+        }
+        guard GPUCompositor.supports(roots) else { return false }
+        waitForGPU()
+        gpu.composite(roots, base: paperPixel, space: blendSpace, tiles: list, into: below.texture)
+        below.markChanged()
+        return true
+    }
+
     /// Recompose les tuiles données : calcul en parallèle sur tous les cœurs (lecture seule des calques),
     /// par paquets pour borner la mémoire, puis envoi au GPU sur le fil courant.
     private func recomposite(_ tiles: Set<TileCoord>) {
+        if recompositeOnGPU(tiles) { return }
         let occupied = LayerCompositor.occupiedTiles(stack)
         let paperPixel = SIMD4<Float>(paper.x, paper.y, paper.z, 1)
         let roots = stack.children(of: nil)

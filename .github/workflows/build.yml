@@ -27,10 +27,10 @@ jobs:
       - name: swift test
         working-directory: Packages/ProRangeKit
         run: swift test --parallel --skip PerformanceBenchmarks
-      # Seul et non parallèle, pour que les chronométrages (lignes « PERF ») apparaissent dans le journal.
+      # Seul, non parallèle et optimisé comme l'app (Release) : chronométrages réalistes (lignes « PERF »).
       - name: Banc d'essai de performance
         working-directory: Packages/ProRangeKit
-        run: swift test --filter PerformanceBenchmarks
+        run: swift test -c release -Xswiftc -enable-testing --filter PerformanceBenchmarks
 
   ipa:
     name: App iPad non signée (.ipa)

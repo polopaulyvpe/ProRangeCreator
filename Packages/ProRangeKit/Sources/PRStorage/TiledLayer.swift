@@ -283,12 +283,52 @@ public final class TiledLayer {
     public func endOperation() -> [TileDelta] {
         guard let before = recording else { return [] }
         recording = nil
-        return before
-            .compactMap { coord, old -> TileDelta? in
-                let new = state(of: coord)
-                return old == new ? nil : TileDelta(coord: coord, before: old, after: new)
+        // États d'après compressés en parallèle (lecture seule du calque) : c'est le coût principal d'une fin de trait.
+        let touched = Array(before)
+        var after = [TileState](repeating: .absent, count: touched.count)
+        after.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: touched.count) { i in
+                out[i] = state(of: touched[i].key)
+            }
+        }
+        return zip(touched, after)
+            .compactMap { entry, new -> TileDelta? in
+                entry.value == new ? nil : TileDelta(coord: entry.key, before: entry.value, after: new)
             }
             .sorted { ($0.coord.y, $0.coord.x) < ($1.coord.y, $1.coord.x) }
+    }
+
+    /// Remplace plusieurs tuiles d'un coup (fin d'un trait peint sur le GPU) : les états d'avant, nécessaires à
+    /// l'annulation, sont compressés en parallèle au lieu d'une tuile après l'autre.
+    public func replaceTiles(_ updates: [(coord: TileCoord, bytes: [UInt8])]) {
+        if let recorded = recording {
+            let fresh = updates.map(\.coord).filter { recorded[$0] == nil }
+            var states = [TileState](repeating: .absent, count: fresh.count)
+            states.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: fresh.count) { i in
+                    out[i] = state(of: fresh[i])
+                }
+            }
+            for (coord, state) in zip(fresh, states) { recording?[coord] = state }
+        }
+        for update in updates { replaceTile(update.coord, with: update.bytes) }
+    }
+
+    /// Compresse les tuiles gardées en clair (après peinture) : moins de mémoire, et un enregistrement qui n'a plus
+    /// qu'à écrire des données déjà prêtes. Le contenu ne change pas.
+    public func packResidentTiles() {
+        let resident = tiles.compactMap { coord, content -> TileCoord? in
+            if case .pixels = content { return coord }
+            return nil
+        }
+        guard !resident.isEmpty else { return }
+        var packed = [Data](repeating: Data(), count: resident.count)
+        packed.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: resident.count) { i in
+                if case .pixels(let p)? = tiles[resident[i]] { out[i] = Self.pack(p) }
+            }
+        }
+        for (coord, data) in zip(resident, packed) where !data.isEmpty { tiles[coord] = .packed(data) }
     }
 
     /// État d'une tuile au début de l'opération en cours (nil si elle n'a pas été touchée).
