@@ -26,7 +26,11 @@ public final class TiledLayer {
         case spilled
     }
 
-    private var tiles: [TileCoord: Content] = [:]
+    private var tiles: [TileCoord: Content] = [:] {
+        didSet { contentVersion &+= 1 }
+    }
+    /// Change à chaque écriture de tuile (vignettes et caches à refaire seulement pour les calques modifiés).
+    public private(set) var contentVersion = 0
     /// États d'avant des tuiles touchées pendant l'opération en cours.
     private var recording: [TileCoord: TileState]?
 

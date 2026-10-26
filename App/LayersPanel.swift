@@ -225,7 +225,7 @@ struct LayersPanel: View {
         return HStack(spacing: 12) {
             if item.isClipped { Image(systemName: "arrow.turn.left.down").font(.caption) }
             Group {
-                if let layer = item.layer, let image = LayerThumbnails.image(layer, revision: session.historyRevision) {
+                if let layer = item.layer, let image = LayerThumbnails.image(layer, revision: layer.contentVersion) {
                     Image(decorative: image, scale: 1).resizable()
                 } else {
                     Image(systemName: item.isGroup ? "folder.fill" : "square").font(.title2)

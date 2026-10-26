@@ -55,8 +55,8 @@ struct PreferencesSheet: View {
                     Text("À gauche, le trait réagit dès un appui léger ; à droite, il faut appuyer plus fort pour atteindre la taille et l'opacité maximales.")
                 }
                 Section("Gestes") {
-                    Picker("Double tap à 2 doigts", selection: $session.preferences.twoFingerDoubleTap) { actions }
-                    Picker("Double tap à 3 doigts", selection: $session.preferences.threeFingerDoubleTap) { actions }
+                    Picker("Tap à 2 doigts", selection: $session.preferences.twoFingerDoubleTap) { actions }
+                    Picker("Tap à 3 doigts", selection: $session.preferences.threeFingerDoubleTap) { actions }
                     Picker("Tap à 4 doigts", selection: $session.preferences.fourFingerTap) { actions }
                     Toggle("Maintien à 2 doigts : annulation rapide", isOn: $session.preferences.rapidUndoHold)
                     Toggle("Appui long : pipette", isOn: $session.preferences.eyedropperHold)

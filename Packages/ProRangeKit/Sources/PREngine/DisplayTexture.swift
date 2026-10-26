@@ -41,12 +41,42 @@ public final class DisplayTexture {
     public func markChanged() { mipmapsDirty = true }
 
     /// Recopie tout le calque.
+    /// Tout le calque : tuiles vides remplies d'un coup, tuiles peintes décodées en parallèle (lecture seule), par paquets.
     public func uploadAll(_ layer: TiledLayer) {
-        var coords: [TileCoord] = []
+        var stored: [TileCoord] = []
         for ty in 0..<layer.tilesDown {
-            for tx in 0..<layer.tilesAcross { coords.append(TileCoord(x: tx, y: ty)) }
+            for tx in 0..<layer.tilesAcross {
+                let coord = TileCoord(x: tx, y: ty)
+                if layer.isStored(coord) { stored.append(coord) } else { fill(coord, with: .zero) }
+            }
         }
-        upload(layer, tiles: coords)
+        let side = tileSide
+        let direct = factor == 1 && layer.format == .rgba16Float
+        let chunk = 64
+        var start = 0
+        while start < stored.count {
+            let slice = Array(stored[start..<min(stored.count, start + chunk)])
+            var decoded = [[Float16]](repeating: [], count: slice.count)
+            decoded.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: slice.count) { i in
+                    if direct {
+                        let bytes = layer.tileBytes(slice[i])
+                        out[i] = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
+                    } else {
+                        out[i] = self.reduce(layer.tileFloatPixels(slice[i]))
+                    }
+                }
+            }
+            for (i, coord) in slice.enumerated() {
+                let region = MTLRegionMake2D(coord.x * side, coord.y * side, side, side)
+                guard region.origin.x + side <= texture.width, region.origin.y + side <= texture.height else { continue }
+                decoded[i].withUnsafeBytes { raw in
+                    texture.replace(region: region, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: side * 8)
+                }
+            }
+            mipmapsDirty = true
+            start += chunk
+        }
     }
 
     /// Recopie les tuiles données depuis le calque CPU.

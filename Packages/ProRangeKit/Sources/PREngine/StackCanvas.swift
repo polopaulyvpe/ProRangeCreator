@@ -330,27 +330,55 @@ public final class StackCanvas {
         recomposite(Set(allTiles))
     }
 
+    /// Recompose les tuiles données : calcul en parallèle sur tous les cœurs (lecture seule des calques),
+    /// par paquets pour borner la mémoire, puis envoi au GPU sur le fil courant.
     private func recomposite(_ tiles: Set<TileCoord>) {
         let occupied = LayerCompositor.occupiedTiles(stack)
         let paperPixel = SIMD4<Float>(paper.x, paper.y, paper.z, 1)
         let roots = stack.children(of: nil)
+        let source = stack
+        let paperColor = paper
+        let space = blendSpace
+        let fast = usesFastPath
+        let index = rootIndexOfActive
+        let withAbove = !aboveIsEmpty
+        var empty: [TileCoord] = []
+        var painted: [TileCoord] = []
         for coord in tiles {
-            if !occupied.contains(coord) {
-                // Rien de peint ici : papier dessous, rien dessus.
-                below?.fill(coord, with: paperPixel)
-                if usesFastPath { above?.fill(coord, with: .zero) }
-                continue
-            }
-            if usesFastPath, let index = rootIndexOfActive {
-                below?.upload(coord, pixels: LayerCompositor.compositeTile(coord, stack: stack, rootRange: 0..<index,
-                                                                           paper: paper, space: blendSpace))
-                if !aboveIsEmpty {
-                    above?.upload(coord, pixels: LayerCompositor.compositeTile(coord, stack: stack, rootRange: (index + 1)..<roots.count,
-                                                                               paper: nil, space: blendSpace))
+            if occupied.contains(coord) { painted.append(coord) } else { empty.append(coord) }
+        }
+        for coord in empty {
+            // Rien de peint ici : papier dessous, rien dessus.
+            below?.fill(coord, with: paperPixel)
+            if fast { above?.fill(coord, with: .zero) }
+        }
+        let chunk = 48
+        var start = 0
+        while start < painted.count {
+            let slice = Array(painted[start..<min(painted.count, start + chunk)])
+            var belowPixels = [[SIMD4<Float>]](repeating: [], count: slice.count)
+            var abovePixels = [[SIMD4<Float>]](repeating: [], count: slice.count)
+            belowPixels.withUnsafeMutableBufferPointer { belowOut in
+                abovePixels.withUnsafeMutableBufferPointer { aboveOut in
+                    DispatchQueue.concurrentPerform(iterations: slice.count) { i in
+                        let coord = slice[i]
+                        if fast, let index {
+                            belowOut[i] = LayerCompositor.compositeTile(coord, stack: source, rootRange: 0..<index, paper: paperColor, space: space)
+                            if withAbove {
+                                aboveOut[i] = LayerCompositor.compositeTile(coord, stack: source, rootRange: (index + 1)..<roots.count,
+                                                                            paper: nil, space: space)
+                            }
+                        } else {
+                            belowOut[i] = LayerCompositor.compositeTile(coord, stack: source, paper: paperColor, space: space)
+                        }
+                    }
                 }
-            } else {
-                below?.upload(coord, pixels: LayerCompositor.compositeTile(coord, stack: stack, paper: paper, space: blendSpace))
             }
+            for (i, coord) in slice.enumerated() {
+                below?.upload(coord, pixels: belowPixels[i])
+                if fast, withAbove { above?.upload(coord, pixels: abovePixels[i]) }
+            }
+            start += chunk
         }
     }
 

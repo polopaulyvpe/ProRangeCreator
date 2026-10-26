@@ -188,7 +188,7 @@ struct SideRail: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            RailSlider(value: $session.settings.radiusDegrees, range: 0.3...30)
+            RailSlider(value: $session.settings.radiusDegrees, range: 0.3...30, curve: 2) { session.showSizePreview = $0 }
             Button {
                 session.showToast("Appui long sur la toile : pipette")
             } label: {
@@ -213,10 +213,13 @@ struct SideRail: View {
 struct RailSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
+    /// Exposant de la courbe : 2 donne plus de finesse en bas (petites tailles).
+    var curve: Double = 1
+    var onEditing: (Bool) -> Void = { _ in }
     private let height: CGFloat = 230
 
     var body: some View {
-        let t = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+        let t = pow(min(1, max(0, (value - range.lowerBound) / (range.upperBound - range.lowerBound))), 1 / curve)
         ZStack(alignment: .bottom) {
             Capsule().fill(Color(white: 0.27)).frame(width: 40, height: height)
             Capsule().fill(Color(white: 0.85)).frame(width: 34, height: 22)
@@ -224,10 +227,13 @@ struct RailSlider: View {
         }
         .frame(width: 40, height: height)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-            let f = min(1, max(0, 1 - Double(g.location.y / height)))
-            value = range.lowerBound + f * (range.upperBound - range.lowerBound)
-        })
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                onEditing(true)
+                let f = min(1, max(0, 1 - Double(g.location.y / height)))
+                value = range.lowerBound + pow(f, curve) * (range.upperBound - range.lowerBound)
+            }
+            .onEnded { _ in onEditing(false) })
     }
 }
 
@@ -477,8 +483,8 @@ struct ActionsPanel: View {
                 helpLine(session.preferences.fingerPainting ? "2 doigts glissés" : "1 ou 2 doigts glissés", "regarder autour (tourner la sphère)")
                 helpLine("Pincer", "zoomer (champ de vision)")
                 helpLine("2 doigts tournés", "pencher la vue (horizon déverrouillé)")
-                helpLine("Double tap 2 doigts", session.preferences.twoFingerDoubleTap.label)
-                helpLine("Double tap 3 doigts", session.preferences.threeFingerDoubleTap.label)
+                helpLine("Tap 2 doigts", session.preferences.twoFingerDoubleTap.label)
+                helpLine("Tap 3 doigts", session.preferences.threeFingerDoubleTap.label)
                 helpLine("Tap 4 doigts", session.preferences.fourFingerTap.label)
                 helpLine("Appui long au doigt", "pipette")
                 helpLine("Déplier", "voir tout le panorama à plat")
@@ -585,5 +591,24 @@ struct PanelToggle: View {
             .foregroundStyle(.white.opacity(0.85))
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
+    }
+}
+
+/// Cercle à la taille réelle du pinceau, au centre de la toile, pendant le réglage de taille.
+struct BrushSizePreview: View {
+    @Bindable var session: CanvasSession
+
+    var body: some View {
+        GeometryReader { geo in
+            let parameters = session.view.parameters(aspect: Double(geo.size.width / max(geo.size.height, 1)))
+            let radiansPerPoint = parameters.pixelAngle(viewportHeight: Double(geo.size.height))
+            let diameter = CGFloat(2 * session.settings.radius(pressure: 1) / max(radiansPerPoint, 1e-6))
+            Circle()
+                .stroke(Color.white, lineWidth: 2)
+                .background(Circle().stroke(Color.black.opacity(0.6), lineWidth: 4))
+                .frame(width: min(diameter, geo.size.height * 2), height: min(diameter, geo.size.height * 2))
+                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+        .ignoresSafeArea()
     }
 }

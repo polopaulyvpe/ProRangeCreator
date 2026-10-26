@@ -69,6 +69,8 @@ final class CanvasSession {
     var showLayers = false
     // Interface façon Procreate (voir TopBar.swift)
     var showingGallery = true
+    /// Réglage de taille en cours : un cercle montre la taille du pinceau sur la toile.
+    var showSizePreview = false
     var showActions = false
     var showAdjustments = false
     var showBrushes = false
@@ -757,10 +759,10 @@ struct MetalCanvas: UIViewRepresentable {
 
         let undoTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleUndoTap(_:)))
         undoTap.numberOfTouchesRequired = 2
-        undoTap.numberOfTapsRequired = 2
+        undoTap.numberOfTapsRequired = 1 // tap simple, comme Procreate : le double tap échouait souvent
         let redoTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleRedoTap(_:)))
         redoTap.numberOfTouchesRequired = 3
-        redoTap.numberOfTapsRequired = 2
+        redoTap.numberOfTapsRequired = 1
         let undoHold = UILongPressGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleUndoHold(_:)))
         undoHold.numberOfTouchesRequired = 2
         undoHold.minimumPressDuration = 0.6
@@ -771,6 +773,11 @@ struct MetalCanvas: UIViewRepresentable {
         let fourTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleFourFingerTap(_:)))
         fourTap.numberOfTouchesRequired = 4
         fourTap.numberOfTapsRequired = 1
+
+        // Double tap sur le Pencil 2 : l'action choisie dans les réglages d'iPadOS.
+        let pencil = UIPencilInteraction()
+        pencil.delegate = coordinator
+        view.addInteraction(pencil)
 
         for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper, fourTap] as [UIGestureRecognizer] {
             gesture.delegate = coordinator
@@ -813,6 +820,10 @@ struct CanvasScreen: View {
                     .padding(session.preferences.leftHanded ? .trailing : .leading, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: session.preferences.leftHanded ? .trailing : .leading)
+            }
+            if session.showSizePreview {
+                BrushSizePreview(session: session)
+                    .allowsHitTesting(false)
             }
             if let toast = session.toast {
                 ToastView(text: toast)
@@ -978,5 +989,22 @@ struct CanvasToolbar: View {
         .font(.callout)
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+extension CanvasCoordinator: UIPencilInteractionDelegate {
+    /// Double tap sur le Pencil 2, selon le réglage d'iPadOS (Réglages > Apple Pencil).
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        switch UIPencilInteraction.preferredTapAction {
+        case .switchEraser, .switchPrevious:
+            session.tool = session.tool == .eraser ? .brush : .eraser
+            session.showToast(session.tool.label)
+        case .showColorPalette:
+            session.showColorPicker.toggle()
+        case .showInkAttributes:
+            session.showBrushes.toggle()
+        default:
+            break
+        }
     }
 }
