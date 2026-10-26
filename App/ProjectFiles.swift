@@ -152,8 +152,10 @@ extension CanvasSession {
     func deleteProject(_ project: ProjectInfo) {
         try? Self.library.delete(project.url)
         if project.url == projectURL {
+            // Supprimé depuis la galerie : il ne doit pas réapparaître à la prochaine sauvegarde automatique.
             projectURL = nil
-            hasUnsavedChanges = true
+            autosaveTask?.cancel()
+            hasUnsavedChanges = false
         }
     }
 
@@ -312,7 +314,12 @@ struct FileMenu: View {
 struct ExportSheet: View {
     @Bindable var session: CanvasSession
     @Environment(\.dismiss) private var dismiss
-    @State private var kind: ExportKind = .exr
+    @State private var kind: ExportKind
+
+    init(session: CanvasSession, kind: ExportKind = .exr) {
+        self.session = session
+        _kind = State(initialValue: kind)
+    }
     @State private var pixelType: EXRPixelType = .half
     @State private var compression: EXRCompression = .zip
     @State private var includeAlpha = false

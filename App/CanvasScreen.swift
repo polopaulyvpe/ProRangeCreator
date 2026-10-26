@@ -67,11 +67,23 @@ final class CanvasSession {
     /// Calques garantis par la mémoire disponible au dernier contrôle (voir `MemoryBudget`).
     private(set) var guaranteedLayers = LayerStack.maxLayers
     var showLayers = false
+    // Interface façon Procreate (voir TopBar.swift)
+    var showingGallery = true
+    var showActions = false
+    var showAdjustments = false
+    var showBrushes = false
+    var exportKind: ExportKind = .exr
+    var toast: String?
+    /// Gestes de navigation en cours : la grille s'affiche pour qu'on voie la sphère tourner.
+    var isNavigating = false
+    /// Change à chaque opération (vignettes des calques).
+    var historyRevision = 0
+    @ObservationIgnored var toastTask: Task<Void, Never>?
     @ObservationIgnored var structureBeforeEdit: [StackItem]?
 
     /// Créé par le coordinateur Metal (il faut le GPU).
     @ObservationIgnored var canvas: StackCanvas?
-    @ObservationIgnored var device: (any MTLDevice)?
+    @ObservationIgnored var device: (any MTLDevice)? = MTLCreateSystemDefaultDevice()
 
     // Fichier (voir ProjectFiles.swift)
     var projectName = "Sans titre"
@@ -98,7 +110,7 @@ final class CanvasSession {
     private(set) var fovDegrees = 90.0
     private(set) var canUndo = false
     private(set) var canRedo = false
-    private(set) var recentColors: [SIMD3<Double>] = []
+    var recentColors: [SIMD3<Double>] = []
     private(set) var blendSpace: BlendSpace = .perceptual
     var tool: PaintTool = .brush
     var brush = BrushSettings.defaultBrush
@@ -387,7 +399,12 @@ final class CanvasSession {
         strokeCancelled()
         cancelTransform()
         cancelDistort()
-        if let entry = try? history.undo(in: historyTarget) { invalidate(entry) }
+        if let entry = try? history.undo(in: historyTarget) {
+            invalidate(entry)
+            showToast("Annuler : \(entry.name)")
+        } else {
+            showToast("Rien à annuler")
+        }
         refreshHistory()
     }
 
@@ -395,7 +412,12 @@ final class CanvasSession {
         strokeCancelled()
         cancelTransform()
         cancelDistort()
-        if let entry = try? history.redo(in: historyTarget) { invalidate(entry) }
+        if let entry = try? history.redo(in: historyTarget) {
+            invalidate(entry)
+            showToast("Rétablir : \(entry.name)")
+        } else {
+            showToast("Rien à rétablir")
+        }
         refreshHistory()
     }
 
@@ -427,6 +449,9 @@ final class CanvasSession {
         paintingMask = false
         refreshHistory()
         structureChanged()
+        // Un projet qu'on vient d'ouvrir ou de créer n'a rien à enregistrer.
+        autosaveTask?.cancel()
+        hasUnsavedChanges = false
     }
 
     /// Après tout changement de structure ou de propriété : calque actif valide, caches à refaire, interface à jour.
@@ -463,6 +488,7 @@ final class CanvasSession {
         // Chaque opération (et chaque annulation) donne une image au timelapse, capturée à la prochaine image affichée,
         // et relance le délai de la sauvegarde automatique.
         timelapseCaptureRequested = true
+        historyRevision += 1
         scheduleAutosave()
     }
 
@@ -568,7 +594,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
                                     exposure: session.exposure, toneMapping: session.toneMapping)
         canvas.configure(&uniforms)
         uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
-        uniforms.setGuides(enabled: session.guidesEnabled, spacingDegrees: session.guideSpacing)
+        uniforms.setGuides(enabled: session.guidesEnabled || session.isNavigating, spacingDegrees: session.guideSpacing)
         if let distort = session.distort {
             uniforms.setSelection(visible: session.hasSelection, distort: distort)
         } else {
@@ -589,12 +615,14 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     // MARK: - Navigation
 
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        trackNavigation(gesture)
         session.view.zoom(by: Double(gesture.scale))
         gesture.scale = 1
         session.refreshViewInfo()
     }
 
     @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+        trackNavigation(gesture)
         guard let view = gesture.view, view.bounds.width > 0, view.bounds.height > 0 else { return }
         let t = gesture.translation(in: view)
         let size = view.bounds.size
@@ -604,8 +632,17 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc func handleRotation(_ gesture: UIRotationGestureRecognizer) {
+        trackNavigation(gesture)
         session.view.rotate(by: Double(gesture.rotation))
         gesture.rotation = 0
+    }
+
+    /// Grille visible pendant les gestes de navigation : sur une toile vide, c'est elle qui montre que la vue tourne.
+    private func trackNavigation(_ gesture: UIGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed: session.isNavigating = true
+        default: session.isNavigating = false
+        }
     }
 
     // MARK: - Historique (D6)
@@ -716,11 +753,11 @@ struct MetalCanvas: UIViewRepresentable {
 // MARK: - Écran
 
 struct CanvasScreen: View {
-    @State private var session = CanvasSession()
+    @Bindable var session: CanvasSession
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack(alignment: .top) {
             MetalCanvas(session: session)
                 .ignoresSafeArea()
             SelectionDragOverlay(session: session)
@@ -730,33 +767,42 @@ struct CanvasScreen: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             if !session.interfaceHidden {
-                VStack(alignment: .leading, spacing: 12) {
-                    CanvasToolbar(session: session)
-                    TransformPanel(session: session)
-                    DistortPanel(session: session)
-                    FilterPanel(session: session)
-                    if !session.preferences.leftHanded { SideControls(session: session) }
+                VStack(spacing: 10) {
+                    TopBar(session: session)
+                    ContextBar(session: session)
                 }
-                .padding(12)
-                if session.preferences.leftHanded {
-                    // Mode gaucher : les curseurs passent à droite, à la même hauteur.
-                    SideControls(session: session)
-                        .padding(.top, 140)
-                        .padding(.trailing, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                }
+                SideRail(session: session)
+                    .padding(session.preferences.leftHanded ? .trailing : .leading, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: session.preferences.leftHanded ? .trailing : .leading)
+            }
+            if let toast = session.toast {
+                ToastView(text: toast)
+                    .padding(.top, session.interfaceHidden ? 20 : 74)
+                    .allowsHitTesting(false)
             }
         }
-        .preferredColorScheme(session.colorScheme)
+        .animation(.easeOut(duration: 0.2), value: session.toast)
+        .statusBarHidden(true)
         .dropDestination(for: Data.self) { items, _ in
             guard let data = items.first else { return false }
             session.loadImport(data: data, name: "Glisser-déposer")
             return true
         }
         .sheet(item: $session.pendingImport) { pending in ImportSheet(session: session, pending: pending) }
-        .task {
-            session.applyLaunchPreferences()
-            session.restoreLastProject()
+        .sheet(isPresented: $session.showExport) { ExportSheet(session: session, kind: session.exportKind) }
+        .sheet(isPresented: $session.showTimelapse) { TimelapseSheet(session: session) }
+        .sheet(isPresented: $session.showPreferences) { PreferencesSheet(session: session) }
+        .sheet(isPresented: $session.showSnapshots) { SnapshotsSheet(session: session) }
+        .sheet(isPresented: $session.showTextSheet) { TextSheet(session: session) }
+        .sheet(isPresented: $session.showBrushLibrary) { BrushLibrarySheet(session: session) }
+        .sheet(isPresented: $session.showRotation) {
+            SphereRotationPanel(session: session)
+                .padding(24)
+                .presentationDetents([.medium])
+        }
+        .fileImporter(isPresented: $session.showImporter, allowedContentTypes: importableTypes, allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { session.loadImport(urls: urls) }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { session.saveForBackground() }

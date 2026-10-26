@@ -119,7 +119,7 @@ struct GallerySheet: View {
     private func reload() { projects = session.listProjects() }
 }
 
-private struct ProjectCard: View {
+struct ProjectCard: View {
     let project: ProjectInfo
     let isCurrent: Bool
 

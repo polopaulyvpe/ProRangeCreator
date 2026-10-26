@@ -2,24 +2,28 @@ import SwiftUI
 
 @main
 struct ProRangeCreatorApp: App {
+    @State private var session = CanvasSession()
+
     var body: some Scene {
         WindowGroup {
-            SpikeRootView()
-                .preferredColorScheme(.dark)
+            AppRootView(session: session)
         }
     }
 }
 
-/// Écran temporaire du spike de phase 1 : pinceau sphérique et mesure mémoire.
-struct SpikeRootView: View {
+/// La galerie au lancement (comme Procreate), puis la toile du projet ouvert.
+struct AppRootView: View {
+    @Bindable var session: CanvasSession
+
     var body: some View {
-        TabView {
-            CanvasScreen()
-                .tabItem { Label("Toile", systemImage: "globe") }
-            SpikeCanvasView()
-                .tabItem { Label("Pinceau 2D", systemImage: "paintbrush.pointed") }
-            MemorySpikeView()
-                .tabItem { Label("Mémoire", systemImage: "memorychip") }
+        Group {
+            if session.showingGallery {
+                GalleryScreen(session: session)
+            } else {
+                CanvasScreen(session: session)
+            }
         }
+        .preferredColorScheme(session.colorScheme)
+        .task { session.applyLaunchPreferences() }
     }
 }

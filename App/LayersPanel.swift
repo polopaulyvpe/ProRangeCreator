@@ -167,11 +167,13 @@ struct LayersPanel: View {
         let _ = session.layersVersion
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Calques").font(.headline)
+                Text("Calques").font(.system(size: 28, weight: .bold)).foregroundStyle(.white.opacity(0.85))
                 Spacer()
-                Button("Nouveau calque", systemImage: "plus") { session.addLayer() }
-                    .labelStyle(.iconOnly)
-                    .disabled(!session.stack.canAddLayer)
+                Button { session.addLayer() } label: {
+                    Image(systemName: "plus").font(.system(size: 26)).foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+                .disabled(!session.stack.canAddLayer)
             }
             budget
 
@@ -181,12 +183,16 @@ struct LayersPanel: View {
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
 
             if let item = session.activeItem {
                 properties(item)
             }
         }
-        .padding(14)
+        .padding(18)
+        .background(Color(white: 0.2))
+        .environment(.colorScheme, .dark)
+        .presentationCompactAdaptation(.popover)
         .onAppear { opacity = Double(session.activeItem?.opacity ?? 1) }
         .onChange(of: session.activeID) { opacity = Double(session.activeItem?.opacity ?? 1) }
         .alert("Renommer", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -216,31 +222,43 @@ struct LayersPanel: View {
 
     private func layerRow(_ item: StackItem, depth: Int) -> some View {
         let selected = item.id == session.activeID
-        return HStack(spacing: 8) {
-            Button {
-                session.toggleVisibility(item.id)
-            } label: {
-                Image(systemName: item.isVisible ? "eye" : "eye.slash")
-                    .foregroundStyle(item.isVisible ? .primary : .secondary)
-            }
-            .buttonStyle(.borderless)
-
+        return HStack(spacing: 12) {
             if item.isClipped { Image(systemName: "arrow.turn.left.down").font(.caption) }
-            Image(systemName: item.isGroup ? "folder" : "square")
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.name).lineLimit(1)
+            Group {
+                if let layer = item.layer, let image = LayerThumbnails.image(layer, revision: session.historyRevision) {
+                    Image(decorative: image, scale: 1).resizable()
+                } else {
+                    Image(systemName: item.isGroup ? "folder.fill" : "square").font(.title2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(white: 0.3))
+                }
+            }
+            .frame(width: 92, height: 46)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name).font(.system(size: 17, weight: .medium)).lineLimit(1)
                 HStack(spacing: 6) {
-                    if item.blendMode != .normal { Text(item.blendMode.label) }
                     if item.opacity < 1 { Text("\(Int(item.opacity * 100)) %") }
                     if item.alphaLock { Image(systemName: "lock") }
                     if item.mask != nil { Image(systemName: "circle.lefthalf.filled") }
                 }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.7))
             }
             Spacer()
+            Text(item.blendMode == .normal ? "N" : String(item.blendMode.label.prefix(2)))
+                .font(.system(size: 17, weight: .bold))
+            Button {
+                session.toggleVisibility(item.id)
+            } label: {
+                Image(systemName: item.isVisible ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 26))
+                    .foregroundStyle(item.isVisible ? (selected ? Color.white : Color(white: 0.75)) : Color(white: 0.5))
+            }
+            .buttonStyle(.borderless)
         }
+        .foregroundStyle(.white)
+        .padding(.vertical, 6)
         .padding(.leading, CGFloat(depth) * 16)
         .contentShape(Rectangle())
         .onTapGesture { session.selectLayer(item.id) }
@@ -248,7 +266,7 @@ struct LayersPanel: View {
             newName = item.name
             renaming = item.id
         }
-        .listRowBackground(selected ? Color.accentColor.opacity(0.25) : Color.clear)
+        .listRowBackground(selected ? Color.accentColor : Color(white: 0.15))
     }
 
     private func properties(_ item: StackItem) -> some View {
@@ -300,5 +318,33 @@ struct LayersPanel: View {
             }
             .font(.caption)
         }
+    }
+}
+
+/// Vignettes des calques, recalculées seulement après une opération (une par calque et par révision de l'historique).
+@MainActor
+enum LayerThumbnails {
+    private static var cache: [UUID: (revision: Int, image: CGImage)] = [:]
+
+    static func image(_ layer: TiledLayer, revision: Int) -> CGImage? {
+        if let cached = cache[layer.id], cached.revision == revision { return cached.image }
+        let w = 96, h = 48
+        let pixels = layer.thumbnail(width: w, height: h)
+        var bytes = [UInt8](repeating: 255, count: w * h * 4)
+        let background: Float = 0.3
+        for i in 0..<(w * h) {
+            let p = pixels[i]
+            let rgb = SIMD3<Float>(p.x, p.y, p.z) + SIMD3<Float>(repeating: background) * (1 - min(1, p.w))
+            bytes[i * 4] = ColorTransfer.encode8(rgb.x)
+            bytes[i * 4 + 1] = ColorTransfer.encode8(rgb.y)
+            bytes[i * 4 + 2] = ColorTransfer.encode8(rgb.z)
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return nil }
+        cache[layer.id] = (revision, image)
+        return image
     }
 }

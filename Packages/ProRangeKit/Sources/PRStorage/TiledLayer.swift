@@ -89,6 +89,36 @@ public final class TiledLayer {
         }
     }
 
+    /// Vignette (un point par case) : chaque tuile compressée est lue une fois et n'est pas gardée décompressée.
+    public func thumbnail(width w: Int, height h: Int) -> [SIMD4<Float>] {
+        let side = TileSize.side
+        var out = [SIMD4<Float>](repeating: .zero, count: w * h)
+        var samples: [TileCoord: [(out: Int, index: Int)]] = [:]
+        for ty in 0..<h {
+            let y = min(height - 1, Int((Double(ty) + 0.5) / Double(h) * Double(height)))
+            for tx in 0..<w {
+                let x = min(width - 1, Int((Double(tx) + 0.5) / Double(w) * Double(width)))
+                samples[TileCoord.containing(x: x, y: y), default: []].append((ty * w + tx, (y % side) * side + x % side))
+            }
+        }
+        let format = format
+        for (coord, points) in samples {
+            switch tiles[coord] {
+            case nil:
+                continue
+            case .uniform(let d):
+                let value = d.withUnsafeBytes { Self.read($0.baseAddress!, 0, format) }
+                for point in points { out[point.out] = value }
+            case .pixels(let p):
+                p.withUnsafeBytes { raw in for point in points { out[point.out] = Self.read(raw.baseAddress!, point.index, format) } }
+            case .packed, .spilled:
+                let p = Self.unpack(packedData(coord), format: format)
+                p.withUnsafeBytes { raw in for point in points { out[point.out] = Self.read(raw.baseAddress!, point.index, format) } }
+            }
+        }
+        return out
+    }
+
     /// Pixels bruts d'une tuile, dans le format du calque (zéros si absente).
     public func tileBytes(_ coord: TileCoord) -> [UInt8] {
         switch tiles[coord] {
