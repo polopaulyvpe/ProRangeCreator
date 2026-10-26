@@ -80,7 +80,7 @@ public final class FilterEngine {
                 let coord = TileCoord(x: tx, y: ty)
                 let bytes = layer.isStored(coord) && layer.format == .rgba16Float ? layer.tileBytes(coord) : zeros
                 bytes.withUnsafeBytes { raw in
-                    texture.replace(region: MTLRegionMake2D(tx * side, ty * side, side, side), mipmapLevel: 0,
+                    texture.replace(region: MTLRegionMake2D(tx * side, ty * side, min(side, texture.width - tx * side), min(side, texture.height - ty * side)), mipmapLevel: 0,
                                     withBytes: raw.baseAddress!, bytesPerRow: side * 8)
                 }
             }
@@ -207,7 +207,7 @@ public final class FilterEngine {
                 let coord = TileCoord(x: tx, y: ty)
                 bytes.withUnsafeMutableBytes { raw in
                     texture.getBytes(raw.baseAddress!, bytesPerRow: side * 8,
-                                     from: MTLRegionMake2D(tx * side, ty * side, side, side), mipmapLevel: 0)
+                                     from: MTLRegionMake2D(tx * side, ty * side, min(side, texture.width - tx * side), min(side, texture.height - ty * side)), mipmapLevel: 0)
                 }
                 if layer.isStored(coord) || bytes.contains(where: { $0 != 0 }) {
                     layer.replaceTile(coord, with: bytes)

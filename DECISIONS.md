@@ -17,6 +17,9 @@
 | — | 2026-10-25 | Toile de l'écran de travail : 8K par défaut | Le pinceau GPU travaille dans une texture pleine résolution (256 Mo à 8K, 1 Gio à 16K) ; 16K attendra la texture virtuelle | 16K |
 | D10 | 2026-10-25 | **Écrivain OpenEXR maison** en Swift (lignes, half/float, aucune ou ZIP avec zlib du framework Compression) | Recommandation appliquée : pas de C++ à vendre ni à compiler sur la CI, export en flux par bandes ; validé par relecture ImageIO sur la CI. **PIZ non géré** (ondelettes + Huffman, gros chantier) : ZIP est le standard des pipelines UE5/Blender | tinyexr (C++ vendoré) |
 | — | 2026-10-25 | Annulation par **deltas de tuiles compressés** (`UndoRedoManager`), pas par rejeu du journal | Exigé par le cahier des charges (§14) ; exact au bit près, coût indépendant de la longueur de l'historique. Le journal binaire des opérations est gardé pour le timelapse | Checkpoints + rejeu (commit 48c3ee9 d'une autre session : ne restaurait pas les pixels) |
+| — | 2026-10-26 | Flou gaussien sphérique **séparable** (σ horizontal / cos(latitude)) plutôt qu'exact | Coût linéaire en σ, temps réel sur GPU ; écart moyen < 2 % contre le flou sphérique exact hors des rangées polaires | Flou exact par voisinage angulaire (quadratique, trop lent en 8K) ; flou par cubemap (aller-retour de reprojection) |
+| — | 2026-10-26 | Ajustements calculés sur les valeurs **encodées** (comme la fusion D4), HDR conservé au-delà de 1 | Mêmes réglages visuels que Procreate ; courbes jusqu'à 16 pour les zones HDR | Ajustements en linéaire |
+| — | 2026-10-26 | « Peindre l'effet » via le **pinceau de clonage** à rotation nulle sur le résultat filtré | Réutilise un mécanisme testé ; masquage local sans calque temporaire | Masque de calque automatique |
 
 ## Conséquences de l'iPad Air 5
 

@@ -62,10 +62,10 @@ final class AdjustmentTests: XCTestCase {
         let d = Equirect.direction(latitude: 0.3, longitude: 1.2)
         XCTAssertEqual(SphericalNoise.value(d, cell: cell, seed: 3), SphericalNoise.value(d, cell: cell, seed: 3), "déterministe")
         XCTAssertNotEqual(SphericalNoise.value(d, cell: cell, seed: 3), SphericalNoise.value(d, cell: cell, seed: 4))
-        // Continu à travers la couture : deux directions voisines de part et d'autre tombent dans la même cellule.
-        let west = Equirect.direction(latitude: 0.1, longitude: .pi - 1e-6)
-        let east = Equirect.direction(latitude: 0.1, longitude: -.pi + 1e-6)
-        XCTAssertEqual(SphericalNoise.value(west, cell: cell, seed: 1), SphericalNoise.value(east, cell: cell, seed: 1))
+        // Fonction de la seule direction : la couture n'existe pas pour le bruit (longitude et longitude + 2π identiques).
+        let west = Equirect.direction(latitude: 0.1, longitude: .pi - 0.05)
+        let wrapped = Equirect.direction(latitude: 0.1, longitude: -.pi - 0.05)
+        XCTAssertEqual(SphericalNoise.value(west, cell: cell, seed: 1), SphericalNoise.value(wrapped, cell: cell, seed: 1))
         var sum: Float = 0
         let n = 2000
         for i in 0..<n {

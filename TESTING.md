@@ -25,6 +25,7 @@ gh run view --log-failed
 | `SelectionShapeTests` | Rectangle, ellipse, polygone ; modes de combinaison ; projection inverse exacte (rectiligne, fenêtre plane, dépliée près de la couture), rien derrière la caméra ; transformation sphérique (origine → cible, inverse, échelle angulaire) |
 | `DeformationTests` | Gnomonique aller-retour ; homographie par quatre coins (coins, inverse, identité, cas dégénéré) ; distorsion (identité, décalage, hémisphère opposé) ; QuickShape (ligne tremblée, cercle, gribouillis refusé) |
 | `PaintingTests` | Courbe prolongée au-delà de 1 (continuité, réversibilité) ; gris moyen façon Procreate ; fusions d'accord sur fond vide et opaque ; gomme ; dynamique de pression ; HSB et hexadécimal |
+| `AdjustmentTests` | Courbe identité, monotone, passant par ses points, prolongée en HDR ; ajustements neutres, désaturation, inversion, dégradé, recoloration (hors tolérance intacte), teinte HDR, balance ; bruit sphérique déterministe, continu sur la couture, uniforme |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
 
 ## Suites actuelles (PREngine) — sautées sans GPU
@@ -36,6 +37,7 @@ gh run view --log-failed
 | `WarpAndGuidesTests` | Rotation GPU contre référence CPU, puis annulation exacte ; guides (horizon tracé, rien entre les lignes) ; aperçu de rotation dans le shader |
 | `DisplayTextureTests` | Réduction 2×, calque brut sans fond |
 | `BrushEngineTests` | Pinceau GPU contre référence CPU (fusion perceptuelle et linéaire, pôle, couture, HDR, gomme) |
+| `FilterEngineTests` | **Les ajustements GPU contre `Adjustment.apply`** ; flou, bruit et aberration chromatique GPU contre CPU ; flou de mouvement et netteté laissent un aplat intact ; bloom (rien sous le seuil, halo autour du HDR) ; aperçu en direct dans la toile, annulé sans trace puis appliqué |
 | `StackCanvasTests` | **Shader contre compositeur CPU pour les 26 modes × 2 espaces** (chemin GPU) ; chemin CPU (Produit au-dessus, masque) ; peinture du masque ; trait GPU annulé sans trace, validé identique au calque CPU, annulé par l'historique ; verrou alpha GPU = CPU |
 
 ## Suites actuelles (PRImaging)
@@ -53,6 +55,7 @@ gh run view --log-failed
 | `DeformationToolTests` | Liquify pousser (le contenu avance), tourbillon, pincer et gonfler (centre fixe) ; pose d'une image face à une direction ; distorsion qui déplace le contenu |
 | `SelectionMaskTests` | Sélections par formes depuis deux vues, ajout, retrait, inversion, effacement ; adoucissement ; sélection automatique ; pinceau limité à la sélection ; contrainte d'une opération ; transformation du contenu et de la sélection ; copie masquée |
 | `SpatialToolTests` | Remplissage dans un anneau, à travers la couture et le pôle, seuil ; dégradé radial ; clonage par rotation ; doigt qui traîne la couleur ; rotation CPU ; entrée d'historique multi-calques |
+| `FilterReferenceTests` | Ajustement limité aux tuiles peintes et journalisé ; **flou séparable contre vrai flou sphérique** ; aplat conservé par le flou ; bruit (transparent intact, grain, monochrome) |
 | `UndoRedoTests` | 12 opérations annulées puis rétablies, chaque étape identique octet par octet ; branche à rétablir effacée par une nouvelle opération ; opération vide non enregistrée ; plafond de pas |
 | `ProjectPackageTests` | Sauvegarde (deux fois, avec remplacement) puis chargement exacts au bit près, métadonnées des calques comprises ; manifest manquant refusé |
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |

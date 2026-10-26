@@ -315,3 +315,19 @@ Méthode validée au point de contrôle :
   - limité à l'hémisphère avant de l'origine ;
   - **pas de déformation par grille** (warp à mailles) : non faite dans ce lot.
 - Transformation et distorsion partagent `TiledLayer.applyWarp` et `SelectionMask.warp`.
+
+## Ajustements et filtres (phase 6)
+
+- **Ajustements ponctuels** (`Adjustment`, PRCore), appliqués pixel par pixel :
+  - teinte / saturation / luminosité, balance des couleurs (ombres, tons moyens, hautes lumières), courbes, dégradé de couleurs, recoloration d'une teinte ;
+  - calcul sur les valeurs encodées (comme Procreate) après dé-prémultiplication ; les modes HSB gardent l'excès HDR (`peak = max(1, max(rgb))`) ;
+  - `ToneCurve` : spline monotone de Fritsch–Carlson, domaine jusqu'à 16 pour le HDR, prolongée linéairement au-delà du dernier point ; envoyée au GPU en table de 512 valeurs.
+- **Filtres spatiaux** (`SphereFilter`), définis sur la sphère et non sur l'image plate :
+  - **flou gaussien** séparable : passe horizontale de σ / cos(latitude) (plafonnée à largeur/6, bouclée sur la couture), passe verticale bornée ; taps à pas entier, 64 au plus ; validé contre un vrai flou sphérique pondéré par l'angle solide (`FilterReference.exactSphericalBlur`) ;
+  - **flou de mouvement** : moyenne le long du grand cercle tangent à une direction (angle par rapport au nord local) ;
+  - **bruit** : valeur par cellule d'un réseau 3D sur la direction, donc sans couture ni étirement aux pôles ; même hachage en Swift et en MSL ;
+  - **netteté** (masque flou), **bloom** (seuil, flou, ajout), **aberration chromatique** (rouge et bleu mis à l'échelle autour d'une direction dans le plan gnomonique).
+- **Moteur** (`FilterEngine`, PREngine) : un noyau MSL par filtre ; chaque noyau a sa référence CPU (`Adjustment.apply`, `FilterReference`).
+- **Aperçu en direct** (`StackCanvas.beginFilter` / `previewFilter` / `endFilter`) : sur le chemin rapide, le résultat est écrit dans la texture du calque actif ; annuler renvoie les tuiles du calque, appliquer relit la texture dans le calque (limité à la sélection) en une entrée d'historique.
+- **Pinceau d'effet** : « Peindre l'effet » garde le résultat comme source et passe sur le pinceau de clonage à rotation nulle ; on peint l'effet là où on veut.
+- Limites : pas de trame, glitch ni flou de perspective ; sur le chemin CPU (sélection, masque, groupe), l'aperçu n'est pas en direct.
