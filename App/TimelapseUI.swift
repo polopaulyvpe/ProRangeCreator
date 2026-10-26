@@ -17,9 +17,10 @@ extension CanvasSession {
         return timelapse
     }
 
-    /// Capture de la vue dépliée entière (1024 × 512, exposition et courbe de l'écran), après une opération.
+    /// Capture de la vue dépliée entière (1024 × 512, exposition et courbe de l'écran), après une opération :
+    /// image du timelapse s'il est actif, et toujours la vignette de la galerie.
     func captureTimelapseFrame(canvas: StackCanvas, renderer: PanoramaRenderer) {
-        guard timelapseEnabled, let recorder = timelapseRecorder, let layers = canvas.panoramaLayers() else { return }
+        guard let layers = canvas.panoramaLayers() else { return }
         let width = 1024, height = 512
         var state = ViewState()
         state.mode = .unfolded
@@ -34,6 +35,8 @@ extension CanvasSession {
             rgba[i * 4 + 1] = ColorTransfer.encode8(Float(halves[i * 4 + 1]))
             rgba[i * 4 + 2] = ColorTransfer.encode8(Float(halves[i * 4 + 2]))
         }
+        latestPreview = (rgba, width, height)
+        guard timelapseEnabled, let recorder = timelapseRecorder else { return }
         recorder.append(rgba: rgba, width: width, height: height)
         timelapseFrames = recorder.frameCount
     }

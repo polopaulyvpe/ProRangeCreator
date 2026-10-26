@@ -3,6 +3,7 @@ import PRCore
 import PRImaging
 import PRStorage
 import SwiftUI
+import UIKit
 
 /// Drapeau d'annulation partagé avec la tâche d'export en arrière-plan.
 final class CancelFlag: @unchecked Sendable {
@@ -78,44 +79,139 @@ extension CanvasSession {
             .sorted { $0.modified > $1.modified }
     }
 
+    static var library: ProjectLibrary { ProjectLibrary(directory: projectsDirectory) }
+    private static let lastProjectKey = "dernierProjet"
+
     func newProject() {
+        if hasUnsavedChanges { saveProject(silently: true) }
         replaceStack(LayerStack(width: Self.canvasWidth, height: Self.canvasWidth / 2))
         projectName = "Sans titre"
+        projectURL = nil
         projectCreatedAt = Date()
+        hasUnsavedChanges = false
         fileMessage = nil
         timelapseRecorder?.reset()
         timelapseFrames = 0
     }
 
-    func saveProject() {
+    /// Enregistre dans le fichier du projet (créé au premier enregistrement, renommé si le nom a changé),
+    /// avec la vignette de la galerie et le timelapse.
+    func saveProject(silently: Bool = false) {
         strokeCancelled()
-        let url = Self.projectsDirectory.appendingPathComponent("\(sanitized(projectName)).prrange")
+        let library = Self.library
         do {
+            var url = projectURL ?? library.uniqueURL(for: projectName)
+            if projectURL != nil, url.deletingPathExtension().lastPathComponent != ProjectLibrary.sanitized(projectName) {
+                url = try library.rename(url, to: projectName)
+            }
             try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
             try timelapseRecorder?.copy(to: url.appendingPathComponent("timelapse", isDirectory: true))
-            fileMessage = "Enregistré : \(url.lastPathComponent)"
+            if let preview = latestPreview {
+                TimelapseRecorder.writeJPEG(preview.rgba, width: preview.width, height: preview.height,
+                                            to: url.appendingPathComponent(ProjectLibrary.thumbnailName))
+            }
+            projectURL = url
+            projectName = url.deletingPathExtension().lastPathComponent
+            hasUnsavedChanges = false
+            UserDefaults.standard.set(url.lastPathComponent, forKey: Self.lastProjectKey)
+            if !silently { fileMessage = "Enregistré : \(projectName)" }
         } catch {
             fileMessage = "Échec de l'enregistrement : \(error.localizedDescription)"
         }
     }
 
     func openProject(_ project: ProjectInfo) {
+        if hasUnsavedChanges, projectURL != project.url { saveProject(silently: true) }
         do {
             let (manifest, loaded) = try ProjectPackage.loadStack(from: project.url)
             replaceStack(loaded)
             projectName = project.name
+            projectURL = project.url
             projectCreatedAt = manifest.createdAt
+            hasUnsavedChanges = false
             // Le timelapse suit le projet (vide s'il n'en a pas).
             timelapseRecorder?.replace(with: project.url.appendingPathComponent("timelapse", isDirectory: true))
             timelapseFrames = timelapseRecorder?.frameCount ?? 0
+            UserDefaults.standard.set(project.url.lastPathComponent, forKey: Self.lastProjectKey)
             fileMessage = "Ouvert : \(project.name)"
         } catch {
             fileMessage = "Impossible d'ouvrir \(project.name) : \(error)"
         }
     }
 
+    /// Au lancement : rouvre le dernier projet (après un plantage, on perd au plus les 30 s avant la sauvegarde automatique).
+    func restoreLastProject() {
+        guard projectURL == nil, !hasUnsavedChanges,
+              let name = UserDefaults.standard.string(forKey: Self.lastProjectKey) else { return }
+        let url = Self.projectsDirectory.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        openProject(ProjectInfo(url: url, modified: Date()))
+    }
+
     func deleteProject(_ project: ProjectInfo) {
-        try? FileManager.default.removeItem(at: project.url)
+        try? Self.library.delete(project.url)
+        if project.url == projectURL {
+            projectURL = nil
+            hasUnsavedChanges = true
+        }
+    }
+
+    func duplicateProject(_ project: ProjectInfo) {
+        if project.url == projectURL, hasUnsavedChanges { saveProject(silently: true) }
+        do {
+            let copy = try Self.library.duplicate(project.url)
+            fileMessage = "Dupliqué : \(copy.deletingPathExtension().lastPathComponent)"
+        } catch {
+            fileMessage = "Duplication impossible : \(error.localizedDescription)"
+        }
+    }
+
+    func renameProject(_ project: ProjectInfo, to name: String) {
+        do {
+            let renamed = try Self.library.rename(project.url, to: name)
+            if project.url == projectURL {
+                projectURL = renamed
+                projectName = renamed.deletingPathExtension().lastPathComponent
+                UserDefaults.standard.set(renamed.lastPathComponent, forKey: Self.lastProjectKey)
+            }
+        } catch {
+            fileMessage = "Renommage impossible : \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Sauvegarde automatique
+
+    /// Appelé après chaque opération : enregistre 30 s après la dernière, sans interrompre un trait ni un outil en cours.
+    func scheduleAutosave() {
+        hasUnsavedChanges = true
+        autosaveTask?.cancel()
+        autosaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            self?.autosaveIfIdle()
+        }
+    }
+
+    private var isBusy: Bool {
+        canvas?.isStroking == true || isExporting || activeFilter != nil || transform != nil || distort != nil
+    }
+
+    private func autosaveIfIdle() {
+        guard hasUnsavedChanges else { return }
+        if isBusy {
+            scheduleAutosave()
+            return
+        }
+        saveProject(silently: true)
+    }
+
+    /// Passage en arrière-plan : enregistrement immédiat, avec du temps demandé au système.
+    func saveForBackground() {
+        guard hasUnsavedChanges, canvas?.isStroking != true else { return }
+        autosaveTask?.cancel()
+        let task = UIApplication.shared.beginBackgroundTask(withName: "Sauvegarde")
+        saveProject(silently: true)
+        UIApplication.shared.endBackgroundTask(task)
     }
 
     /// Exporte la pile visible (ou le calque actif seul) à une ou plusieurs résolutions.
@@ -191,7 +287,8 @@ struct FileMenu: View {
         Menu("Fichier", systemImage: "folder") {
             Button("Nouveau", systemImage: "doc") { session.newProject() }
             Button("Enregistrer", systemImage: "square.and.arrow.down") { session.saveProject() }
-            Button("Ouvrir…", systemImage: "folder") { session.showProjects = true }
+            Button("Galerie…", systemImage: "square.grid.2x2") { session.showProjects = true }
+            Button("Instantanés…", systemImage: "clock.arrow.circlepath") { session.showSnapshots = true }
             Divider()
             ImportMenuItems(session: session)
             Divider()
@@ -202,45 +299,9 @@ struct FileMenu: View {
         .fileImporter(isPresented: $session.showImporter, allowedContentTypes: importableTypes, allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { session.loadImport(urls: urls) }
         }
-        .sheet(isPresented: $session.showProjects) { ProjectsSheet(session: session) }
+        .sheet(isPresented: $session.showProjects) { GallerySheet(session: session) }
+        .sheet(isPresented: $session.showSnapshots) { SnapshotsSheet(session: session) }
         .sheet(isPresented: $session.showExport) { ExportSheet(session: session) }
-    }
-}
-
-struct ProjectsSheet: View {
-    @Bindable var session: CanvasSession
-    @Environment(\.dismiss) private var dismiss
-    @State private var projects: [ProjectInfo] = []
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Nom du projet en cours") {
-                    TextField("Nom", text: $session.projectName)
-                }
-                Section("Projets enregistrés") {
-                    if projects.isEmpty { Text("Aucun projet pour l'instant").foregroundStyle(.secondary) }
-                    ForEach(projects) { project in
-                        Button {
-                            session.openProject(project)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(project.name)
-                                Text(project.modified, style: .relative).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .onDelete { offsets in
-                        for i in offsets { session.deleteProject(projects[i]) }
-                        projects = session.listProjects()
-                    }
-                }
-            }
-            .navigationTitle("Projets")
-            .toolbar { Button("Fermer") { dismiss() } }
-            .onAppear { projects = session.listProjects() }
-        }
     }
 }
 

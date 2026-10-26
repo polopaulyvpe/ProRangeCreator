@@ -76,7 +76,14 @@ final class CanvasSession {
     // Fichier (voir ProjectFiles.swift)
     var projectName = "Sans titre"
     var projectCreatedAt = Date()
+    /// Fichier du projet (nil tant qu'il n'a jamais été enregistré).
+    var projectURL: URL?
+    var hasUnsavedChanges = false
+    @ObservationIgnored var autosaveTask: Task<Void, Never>?
+    /// Dernière capture de la vue dépliée (vignette de la galerie).
+    @ObservationIgnored var latestPreview: (rgba: [UInt8], width: Int, height: Int)?
     var showProjects = false
+    var showSnapshots = false
     var showExport = false
     var fileMessage: String?
     var isExporting = false
@@ -446,8 +453,10 @@ final class CanvasSession {
     func refreshHistory() {
         canUndo = history.canUndo
         canRedo = history.canRedo
-        // Chaque opération (et chaque annulation) donne une image au timelapse, capturée à la prochaine image affichée.
+        // Chaque opération (et chaque annulation) donne une image au timelapse, capturée à la prochaine image affichée,
+        // et relance le délai de la sauvegarde automatique.
         timelapseCaptureRequested = true
+        scheduleAutosave()
     }
 
     // MARK: - Couleur
@@ -690,6 +699,7 @@ struct MetalCanvas: UIViewRepresentable {
 
 struct CanvasScreen: View {
     @State private var session = CanvasSession()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -716,6 +726,10 @@ struct CanvasScreen: View {
             return true
         }
         .sheet(item: $session.pendingImport) { pending in ImportSheet(session: session, pending: pending) }
+        .task { session.restoreLastProject() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { session.saveForBackground() }
+        }
     }
 }
 

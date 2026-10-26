@@ -68,7 +68,7 @@ public final class TimelapseRecorder: @unchecked Sendable {
         }
     }
 
-    static func writeJPEG(_ rgba: [UInt8], width: Int, height: Int, to url: URL) {
+    public static func writeJPEG(_ rgba: [UInt8], width: Int, height: Int, to url: URL) {
         guard let provider = CGDataProvider(data: Data(rgba) as CFData),
               let space = CGColorSpace(name: CGColorSpace.sRGB),
               let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
