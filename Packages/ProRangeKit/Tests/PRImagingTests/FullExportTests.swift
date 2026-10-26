@@ -116,7 +116,8 @@ final class FullExportTests: XCTestCase {
         let transparent = url("alpha.png")
         try PanoramaExporter.export(layer, as: .png(bitDepth: 8, includeAlpha: true), options: PanoramaExportOptions(paper: nil), to: transparent)
         let back = try rawPixels(transparent)
-        XCTAssertEqual(back.pixels[0].w, 0, accuracy: 1e-6, "coin vide transparent")
+        let empty = Equirect.pixel(from: Equirect.direction(latitude: 0.5, longitude: .pi / 4), width: 1024, height: 512)
+        XCTAssertEqual(back.pixels[Int(empty.y) * 1024 + Int(empty.x)].w, 0, accuracy: 1e-6, "zone vide transparente")
         let center = back.pixels[256 * 1024 + 512] // face à -Z : cyan
         XCTAssertEqual(center.w, 1, accuracy: 1e-3)
         XCTAssertEqual(center.y, ColorTransfer.toEncoded(0.9), accuracy: 2 / 255)
