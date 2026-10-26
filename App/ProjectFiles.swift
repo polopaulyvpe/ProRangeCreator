@@ -91,7 +91,8 @@ extension CanvasSession {
         projectCreatedAt = Date()
         hasUnsavedChanges = false
         fileMessage = nil
-        timelapseRecorder?.reset()
+        // Nouveau projet : timelapse dans un dossier de travail neuf (celui du projet précédent reste à côté de lui).
+        timelapseRecorder?.switchTo(URL.cachesDirectory.appendingPathComponent("Timelapse/\(UUID().uuidString)", isDirectory: true))
         timelapseFrames = 0
     }
 
@@ -106,7 +107,8 @@ extension CanvasSession {
                 url = try library.rename(url, to: projectName)
             }
             try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
-            try timelapseRecorder?.copy(to: url.appendingPathComponent("timelapse", isDirectory: true))
+            // Le timelapse vit à côté du paquet : déplacé au premier enregistrement, jamais recopié ensuite.
+            try timelapseRecorder?.relocate(to: library.timelapseDirectory(for: url))
             if let preview = latestPreview {
                 TimelapseRecorder.writeJPEG(preview.rgba, width: preview.width, height: preview.height,
                                             to: url.appendingPathComponent(ProjectLibrary.thumbnailName))
@@ -131,7 +133,13 @@ extension CanvasSession {
             projectCreatedAt = manifest.createdAt
             hasUnsavedChanges = false
             // Le timelapse suit le projet (vide s'il n'en a pas).
-            timelapseRecorder?.replace(with: project.url.appendingPathComponent("timelapse", isDirectory: true))
+            let sibling = Self.library.timelapseDirectory(for: project.url)
+            let legacy = project.url.appendingPathComponent("timelapse", isDirectory: true)
+            if !FileManager.default.fileExists(atPath: sibling.path), FileManager.default.fileExists(atPath: legacy.path) {
+                // Ancien format (timelapse dans le paquet) : sorti une fois pour toutes.
+                try? FileManager.default.copyItem(at: legacy, to: sibling)
+            }
+            timelapseRecorder?.switchTo(sibling)
             timelapseFrames = timelapseRecorder?.frameCount ?? 0
             UserDefaults.standard.set(project.url.lastPathComponent, forKey: Self.lastProjectKey)
             fileMessage = "Ouvert : \(project.name)"
@@ -156,6 +164,7 @@ extension CanvasSession {
             projectURL = nil
             autosaveTask?.cancel()
             hasUnsavedChanges = false
+            timelapseRecorder?.switchTo(URL.cachesDirectory.appendingPathComponent("Timelapse/\(UUID().uuidString)", isDirectory: true))
         }
     }
 
@@ -176,6 +185,7 @@ extension CanvasSession {
                 projectURL = renamed
                 projectName = renamed.deletingPathExtension().lastPathComponent
                 UserDefaults.standard.set(renamed.lastPathComponent, forKey: Self.lastProjectKey)
+                timelapseRecorder?.switchTo(Self.library.timelapseDirectory(for: renamed))
             }
         } catch {
             fileMessage = "Renommage impossible : \(error.localizedDescription)"

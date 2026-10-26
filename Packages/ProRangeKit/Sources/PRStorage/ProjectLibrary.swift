@@ -8,6 +8,7 @@ public struct ProjectLibrary: Sendable {
     public static let fileExtension = "prrange"
     public static let snapshotsSuffix = "instantanes"
     public static let thumbnailName = "vignette.jpg"
+    public static let timelapseSuffix = "timelapse"
 
     public let directory: URL
 
@@ -49,6 +50,14 @@ public struct ProjectLibrary: Sendable {
         project.deletingPathExtension().appendingPathExtension(Self.snapshotsSuffix)
     }
 
+    /// Images du timelapse, à côté du projet (comme les instantanés) : jamais recopiées à l'enregistrement.
+    public func timelapseDirectory(for project: URL) -> URL {
+        project.deletingPathExtension().appendingPathExtension(Self.timelapseSuffix)
+    }
+
+    /// Dossiers voisins qui suivent le projet (instantanés, timelapse).
+    private func companions(of project: URL) -> [URL] { [snapshotsDirectory(for: project), timelapseDirectory(for: project)] }
+
     public func projects() -> [URL] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return urls.filter { $0.pathExtension == Self.fileExtension }
@@ -59,9 +68,8 @@ public struct ProjectLibrary: Sendable {
     public func duplicate(_ project: URL) throws -> URL {
         let target = uniqueURL(for: project.deletingPathExtension().lastPathComponent + " copie")
         try FileManager.default.copyItem(at: project, to: target)
-        let snapshots = snapshotsDirectory(for: project)
-        if FileManager.default.fileExists(atPath: snapshots.path) {
-            try FileManager.default.copyItem(at: snapshots, to: snapshotsDirectory(for: target))
+        for (from, to) in zip(companions(of: project), companions(of: target)) where FileManager.default.fileExists(atPath: from.path) {
+            try FileManager.default.copyItem(at: from, to: to)
         }
         return target
     }
@@ -72,17 +80,17 @@ public struct ProjectLibrary: Sendable {
         let target = uniqueURL(for: name, except: project)
         guard target.standardizedFileURL != project.standardizedFileURL else { return project }
         try FileManager.default.moveItem(at: project, to: target)
-        let snapshots = snapshotsDirectory(for: project)
-        if FileManager.default.fileExists(atPath: snapshots.path) {
-            try FileManager.default.moveItem(at: snapshots, to: snapshotsDirectory(for: target))
+        for (from, to) in zip(companions(of: project), companions(of: target)) where FileManager.default.fileExists(atPath: from.path) {
+            try FileManager.default.moveItem(at: from, to: to)
         }
         return target
     }
 
     public func delete(_ project: URL) throws {
         try FileManager.default.removeItem(at: project)
-        let snapshots = snapshotsDirectory(for: project)
-        if FileManager.default.fileExists(atPath: snapshots.path) { try FileManager.default.removeItem(at: snapshots) }
+        for folder in companions(of: project) where FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.removeItem(at: folder)
+        }
     }
 
     // MARK: - Instantanés

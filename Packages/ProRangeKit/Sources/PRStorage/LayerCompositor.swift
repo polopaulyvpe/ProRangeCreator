@@ -63,9 +63,23 @@ public enum LayerCompositor {
         return pixels
     }
 
+    /// Raccourcis exacts avant le calcul complet (9 conversions de couleur par pixel) :
+    /// - rien dessous : le résultat est la source à l'opacité du calque, quel que soit le mode ;
+    /// - Normal, opaque, opacité pleine : la source remplace ce qui est dessous.
     private static func blend(_ acc: inout [SIMD4<Float>], _ source: [SIMD4<Float>], _ item: StackItem, _ space: BlendSpace) {
-        for i in acc.indices where source[i].w > 0 {
-            acc[i] = Compositing.composite(acc[i], source[i], mode: item.blendMode, opacity: item.opacity, space: space)
+        let mode = item.blendMode
+        let opacity = item.opacity
+        let replaces = mode == .normal && opacity >= 1
+        for i in acc.indices {
+            let s = source[i]
+            guard s.w > 0 else { continue }
+            if acc[i].w <= 0 {
+                acc[i] = s * opacity
+            } else if replaces && s.w >= 1 {
+                acc[i] = s
+            } else {
+                acc[i] = Compositing.composite(acc[i], s, mode: mode, opacity: opacity, space: space)
+            }
         }
     }
 

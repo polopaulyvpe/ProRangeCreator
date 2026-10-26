@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 /// Timelapse par captures : une image JPEG réduite de la vue dépliée après chaque opération, numérotée dans un dossier.
 /// Les écritures passent par une file série (l'encodage JPEG ne bloque pas l'interface).
 public final class TimelapseRecorder: @unchecked Sendable {
-    public let directory: URL
+    public private(set) var directory: URL
     private let queue = DispatchQueue(label: "prorange.timelapse")
     private var count: Int
 
@@ -57,6 +57,33 @@ public final class TimelapseRecorder: @unchecked Sendable {
             let incoming = Self.frames(in: source)
             for url in incoming { try? FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(url.lastPathComponent)) }
             count = incoming.count
+        }
+    }
+
+    /// Continue dans un autre dossier (projet ouvert) : les images qui s'y trouvent deviennent le timelapse courant.
+    public func switchTo(_ url: URL) {
+        queue.sync {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            directory = url
+            count = Self.frames(in: url).count
+        }
+    }
+
+    /// Déplace le dossier entier (premier enregistrement, renommage) : un simple renommage, sans recopie des images.
+    public func relocate(to url: URL) throws {
+        try queue.sync {
+            guard url.standardizedFileURL != directory.standardizedFileURL else { return }
+            let fm = FileManager.default
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: directory.path) {
+                if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+                try fm.moveItem(at: directory, to: url)
+            } else {
+                // Dossier déjà déplacé (renommage du projet) : on le suit, sans rien effacer.
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            }
+            directory = url
+            count = Self.frames(in: url).count
         }
     }
 

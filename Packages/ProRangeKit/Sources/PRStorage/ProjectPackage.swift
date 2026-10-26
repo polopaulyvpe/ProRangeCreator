@@ -55,7 +55,17 @@ public enum ProjectPackage {
 
         for layer in layers {
             let store = try TileStore(baseURL: staging.appendingPathComponent("layers/\(layer.id.uuidString)"))
-            for coord in layer.storedTiles { try store.write(layer.state(of: coord), at: coord) }
+            // Compression et écriture des tuiles en parallèle (lecture seule du calque, un fichier par tuile).
+            let coords = layer.storedTiles
+            let failure = ErrorBox()
+            DispatchQueue.concurrentPerform(iterations: coords.count) { i in
+                do {
+                    try store.write(layer.state(of: coords[i]), at: coords[i])
+                } catch {
+                    failure.set(error)
+                }
+            }
+            if let error = failure.error { throw error }
         }
         let manifest = Manifest(
             formatVersion: formatVersion, width: first.width, height: first.height, tileSize: TileSize.side,
@@ -90,14 +100,27 @@ public enum ProjectPackage {
             layer.opacity = record.opacity
             layer.isVisible = record.isVisible
             let store = try TileStore(baseURL: url.appendingPathComponent("layers/\(record.id.uuidString)"))
-            for coord in store.list(level: 0) {
-                let state = try store.read(coord)
-                if case .packed(let d) = state {
-                    // Valide la tuile dès le chargement, pour ne jamais échouer plus tard en pleine peinture.
-                    _ = try TileCodec.decompress(d, expectedSize: record.format.bytesPerTile)
+            // Lecture et validation des tuiles en parallèle, puis rangement dans le calque sur le fil courant.
+            let coords = store.list(level: 0)
+            var states = [TileState](repeating: .absent, count: coords.count)
+            let failure = ErrorBox()
+            let bytesPerTile = record.format.bytesPerTile
+            states.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: coords.count) { i in
+                    do {
+                        let state = try store.read(coords[i])
+                        if case .packed(let d) = state {
+                            // Valide la tuile dès le chargement, pour ne jamais échouer plus tard en pleine peinture.
+                            _ = try TileCodec.decompress(d, expectedSize: bytesPerTile)
+                        }
+                        out[i] = state
+                    } catch {
+                        failure.set(error)
+                    }
                 }
-                layer.restore(state, at: coord)
             }
+            if let error = failure.error { throw error }
+            for (coord, state) in zip(coords, states) { layer.restore(state, at: coord) }
             return layer
         }
         return (manifest, layers)
@@ -161,5 +184,17 @@ public enum ProjectPackage {
             }
         }
         return (manifest, LayerStack(width: manifest.width, height: manifest.height, format: first.format, items: items))
+    }
+}
+
+/// Première erreur levée par des itérations parallèles.
+final class ErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var error: (any Error)?
+
+    func set(_ error: any Error) {
+        lock.lock()
+        if self.error == nil { self.error = error }
+        lock.unlock()
     }
 }
