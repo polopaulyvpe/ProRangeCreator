@@ -1,6 +1,7 @@
 import MetalKit
 import PRCore
 import PREngine
+import PRImaging
 import PRStorage
 import simd
 import SwiftUI
@@ -147,6 +148,11 @@ final class CanvasSession {
     var showImporter = false
     var isDecodingImport = false
     var showBrushLibrary = false
+    var showTimelapse = false
+    var timelapseEnabled = true
+    var timelapseFrames = 0
+    @ObservationIgnored var timelapse: TimelapseRecorder?
+    @ObservationIgnored var timelapseCaptureRequested = false
     @ObservationIgnored var previousDabCenter: Vec3?
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
@@ -440,6 +446,8 @@ final class CanvasSession {
     func refreshHistory() {
         canUndo = history.canUndo
         canRedo = history.canRedo
+        // Chaque opération (et chaque annulation) donne une image au timelapse, capturée à la prochaine image affichée.
+        timelapseCaptureRequested = true
     }
 
     // MARK: - Couleur
@@ -555,6 +563,11 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         encoder.endEncoding()
         commands.present(drawable)
         commands.commit()
+        if session.timelapseCaptureRequested {
+            session.timelapseCaptureRequested = false
+            commands.waitUntilCompleted() // la capture doit voir les derniers dabs écrits dans les textures
+            session.captureTimelapseFrame(canvas: canvas, renderer: renderer)
+        }
     }
 
     // MARK: - Navigation

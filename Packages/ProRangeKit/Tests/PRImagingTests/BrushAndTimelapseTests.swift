@@ -6,7 +6,8 @@ import PRCore
 import XCTest
 
 /// Faux pinceau Procreate : un objet archivé par NSKeyedArchiver avec des clés plates, comme `SilicaBrush`.
-private final class FakeBrush: NSObject, NSCoding {
+@objc(PRFakeBrush)
+final class FakeBrush: NSObject, NSCoding {
     override init() {}
     required init?(coder: NSCoder) { nil }
 
@@ -128,7 +129,7 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(back.settings.grainScaleDegrees, 7)
         let shape = try XCTUnwrap(back.settings.shape)
         XCTAssertEqual(shape.size, 32)
-        for (a, b) in zip(shape.values, settings.shape!.values) { XCTAssertEqual(a, b, accuracy: 0.5 / 255 + 1e-6) }
+        for (a, b) in Swift.zip(shape.values, settings.shape!.values) { XCTAssertEqual(a, b, accuracy: 0.5 / 255 + 1e-6) }
         XCTAssertEqual(back.settings.grain!.values[16 * 32 + 16], 0, accuracy: 0.01, "inversée")
     }
 

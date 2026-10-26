@@ -154,6 +154,9 @@ struct ToolOptions: View {
                 Toggle("QuickShape (tracer puis maintenir)", isOn: $session.quickShapeEnabled)
             }
             .fixedSize()
+            Button("Pinceaux…", systemImage: "paintbrush.pointed") { session.showBrushLibrary = true }
+                .fixedSize()
+                .sheet(isPresented: $session.showBrushLibrary) { BrushLibrarySheet(session: session) }
         case .liquify:
             LiquifyOptions(session: session)
         case .smudge:

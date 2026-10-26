@@ -83,6 +83,8 @@ extension CanvasSession {
         projectName = "Sans titre"
         projectCreatedAt = Date()
         fileMessage = nil
+        timelapseRecorder?.reset()
+        timelapseFrames = 0
     }
 
     func saveProject() {
@@ -90,6 +92,7 @@ extension CanvasSession {
         let url = Self.projectsDirectory.appendingPathComponent("\(sanitized(projectName)).prrange")
         do {
             try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
+            try timelapseRecorder?.copy(to: url.appendingPathComponent("timelapse", isDirectory: true))
             fileMessage = "Enregistré : \(url.lastPathComponent)"
         } catch {
             fileMessage = "Échec de l'enregistrement : \(error.localizedDescription)"
@@ -102,6 +105,9 @@ extension CanvasSession {
             replaceStack(loaded)
             projectName = project.name
             projectCreatedAt = manifest.createdAt
+            // Le timelapse suit le projet (vide s'il n'en a pas).
+            timelapseRecorder?.replace(with: project.url.appendingPathComponent("timelapse", isDirectory: true))
+            timelapseFrames = timelapseRecorder?.frameCount ?? 0
             fileMessage = "Ouvert : \(project.name)"
         } catch {
             fileMessage = "Impossible d'ouvrir \(project.name) : \(error)"
@@ -190,7 +196,9 @@ struct FileMenu: View {
             ImportMenuItems(session: session)
             Divider()
             Button("Exporter…", systemImage: "square.and.arrow.up") { session.showExport = true }
+            Button("Timelapse…", systemImage: "film") { session.showTimelapse = true }
         }
+        .sheet(isPresented: $session.showTimelapse) { TimelapseSheet(session: session) }
         .fileImporter(isPresented: $session.showImporter, allowedContentTypes: importableTypes, allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { session.loadImport(urls: urls) }
         }
