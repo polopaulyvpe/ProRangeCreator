@@ -73,4 +73,35 @@ final class BrushTipTests: XCTestCase {
         XCTAssertEqual(BrushSettings.strokeAngle(from: frame.unproject([-0.01, 0]), to: center), 0, accuracy: 1e-6, "vers l'est")
         XCTAssertEqual(BrushSettings.strokeAngle(from: frame.unproject([0, -0.01]), to: center), .pi / 2, accuracy: 1e-6, "vers le nord")
     }
+
+    func testJitterAndFlip() {
+        var settings = BrushSettings(radiusDegrees: 4, spacing: 0.2)
+        settings.shape = halfShape()
+        settings.sizeJitter = 0.5
+        settings.opacityJitter = 0.5
+        settings.scatter = 1
+        settings.rotationJitter = .pi
+        settings.randomFlip = true
+        let center = Equirect.direction(latitude: 0.1, longitude: 0.4)
+        let plain = settings.dab(at: center, pressure: 1, color: .one, mode: .paint)
+        XCTAssertEqual(plain.radius, settings.radius(pressure: 1), accuracy: 1e-12, "sans tirage : pas de variation")
+        XCTAssertLessThan(simd_distance(plain.center, center), 1e-12)
+
+        var a = StrokeRandom(seed: 42), b = StrokeRandom(seed: 42)
+        XCTAssertEqual(a.dab(), b.dab(), "reproductible")
+        let random = DabRandom(size: 1, opacity: 1, rotation: 1, scatter: 1, flip: true)
+        let varied = settings.dab(at: center, pressure: 1, color: .one, mode: .paint, random: random)
+        XCTAssertEqual(varied.radius, plain.radius * 0.5, accuracy: 1e-12)
+        XCTAssertEqual(varied.color.w, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(Sphere.angle(varied.center, center), 2 * varied.radius, accuracy: 1e-9, "dispersion d'un diamètre")
+        XCTAssertEqual(varied.tip?.flipX, true)
+        XCTAssertEqual(varied.tip?.rotation ?? 0, .pi, accuracy: 1e-12)
+
+        // Miroir : le côté blanc de la forme passe à l'est.
+        let frame = TangentFrame(center: center)
+        let mirrored = DabEvaluator(SphericalDab(center: center, radius: 0.2, hardness: 1, color: [1, 1, 1, 1],
+                                                 tip: DabTip(shape: halfShape(), flipX: true)), pixelAngle: 0.001)
+        XCTAssertEqual(mirrored.coverage(at: frame.unproject([0.1, 0])), 1, accuracy: 1e-5)
+        XCTAssertEqual(settings.spacing(radius: 1, random: 0.5), 0.2, accuracy: 1e-12)
+    }
 }

@@ -15,6 +15,19 @@ public enum BuiltInBrushes {
     /// Générés une fois, au premier accès.
     public static let all: [BuiltInBrush] = make()
 
+    /// Substitut des formes internes de Procreate (non incluses dans les .brush) : tache ronde granuleuse.
+    public static let substituteShape: BrushTexture = shape("Substitut granuleux") { x, y in
+        let d = (x * x + y * y).squareRoot()
+        let disc = 1 - smoothstep(0.55, 0.95, d)
+        let speckle = smoothstep(0.35, 0.65, fbm(x * 4 + 7, y * 4 + 7, octaves: 4, period: 64, seed: 101))
+        return disc * (0.35 + 0.65 * speckle)
+    }
+
+    /// Substitut des grains internes de Procreate : grain de papier raccordable.
+    public static let substituteGrain: BrushTexture = grain("Substitut de grain") { u, v in
+        0.35 + 0.9 * (fbm(u * 16, v * 16, octaves: 4, period: 16, seed: 202) - 0.3)
+    }
+
     // MARK: - Bruit
 
     /// Hachage entier → [0, 1).

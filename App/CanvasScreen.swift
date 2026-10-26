@@ -178,6 +178,7 @@ final class CanvasSession {
     @ObservationIgnored var timelapse: TimelapseRecorder?
     @ObservationIgnored var timelapseCaptureRequested = false
     @ObservationIgnored var previousDabCenter: Vec3?
+    @ObservationIgnored var strokeRandom = StrokeRandom(seed: 1)
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -263,10 +264,10 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
-    func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0) -> SphericalDab {
+    func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0, random: DabRandom = .none) -> SphericalDab {
         let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
         return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase,
-                            strokeAngle: strokeAngle)
+                            strokeAngle: strokeAngle, random: random)
     }
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
@@ -304,6 +305,7 @@ final class CanvasSession {
         canvas.beginStroke()
         if tool == .brush { rememberColor() }
         previousDabCenter = nil
+        strokeRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
         let centers = sampler.begin(at: d)
         switch tool {
         case .smudge, .liquify:
@@ -337,7 +339,7 @@ final class CanvasSession {
             return
         }
         guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
-        let spacing = max(settings.radius(pressure: pressure) * settings.spacing, 1e-4)
+        let spacing = settings.spacing(radius: settings.radius(pressure: pressure), random: strokeRandom.next())
         let centers = sampler.add(d, spacing: spacing)
         switch tool {
         case .smudge: applySmudge(centers, pressure: pressure)
@@ -356,9 +358,11 @@ final class CanvasSession {
         for center in centers {
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousDabCenter ?? center)
+            // Mêmes tirages pour toutes les copies de symétrie : elles restent identiques.
+            let random = settings.hasJitter ? strokeRandom.dab() : .none
             for (i, image) in images.enumerated() {
                 let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
-                dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle))
+                dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle, random: random))
             }
             previousDabCenter = center
         }

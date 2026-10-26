@@ -16,7 +16,7 @@ public final class BrushEngine {
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, opacité
         var options: SIMD4<Float>  // espace de fusion (0 perceptuel, 1 linéaire), verrou alpha, inutilisés
         var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
-        var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, inutilisés
+        var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, inutilisé
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -96,7 +96,7 @@ public final class BrushEngine {
             let rotation = tip?.rotation ?? 0
             let tipVector = SIMD4<Float>(Float(cos(rotation)), Float(sin(rotation)),
                                          tip?.shape != nil ? 1 : 0, tip?.grain != nil ? 1 : 0)
-            let grainVector = SIMD4<Float>(Float(1 / (tip?.grainScale ?? 1)), Float(tip?.grainDepth ?? 0), 0, 0)
+            let grainVector = SIMD4<Float>(Float(1 / (tip?.grainScale ?? 1)), Float(tip?.grainDepth ?? 0), tip?.flipX == true ? 1 : 0, 0)
             encoder.setTexture(gpuTexture(tip?.shape), index: 1)
             encoder.setTexture(gpuTexture(tip?.grain), index: 2)
             for columns in span.columns {
@@ -190,6 +190,7 @@ public final class BrushEngine {
             float px = dot(tangent, east) * k;
             float py = dot(tangent, north) * k;
             float qx = (px * dab.tip.x + py * dab.tip.y) / dab.center.w;
+            if (dab.grain.z > 0.5) { qx = -qx; }
             float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w;
             if (abs(qx) > 1.0 || abs(qy) > 1.0) { return; }
             a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5)).r;

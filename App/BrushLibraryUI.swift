@@ -148,6 +148,17 @@ struct BrushLibrarySheet: View {
                     }
                     Toggle("Inverser l'image importée (forme noire sur blanc)", isOn: $invertTexture)
                 }
+                Section("Variations à chaque dab") {
+                    jitterSlider("Espacement", value: $session.settings.spacingJitter, range: 0...1)
+                    jitterSlider("Dispersion", value: $session.settings.scatter, range: 0...2)
+                    jitterSlider("Taille", value: $session.settings.sizeJitter, range: 0...1)
+                    jitterSlider("Opacité", value: $session.settings.opacityJitter, range: 0...1)
+                    LabeledContent("Rotation") {
+                        Slider(value: $session.settings.rotationJitter, in: 0...Double.pi)
+                        Text("±\(Int(session.settings.rotationJitter * 180 / .pi))°").monospacedDigit().frame(width: 52, alignment: .trailing)
+                    }
+                    Toggle("Retournement aléatoire", isOn: $session.settings.randomFlip)
+                }
                 ForEach(BuiltInBrushes.categories, id: \.self) { category in
                     Section(category) {
                         ForEach(BuiltInBrushes.all.filter { $0.category == category }) { builtIn in
@@ -233,6 +244,13 @@ struct BrushLibrarySheet: View {
     private func open(_ kind: BrushFileRequest) {
         request = kind
         showPicker = true
+    }
+
+    private func jitterSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        LabeledContent(title) {
+            Slider(value: value, in: range)
+            Text("\(Int((value.wrappedValue * 100).rounded())) %").monospacedDigit().frame(width: 52, alignment: .trailing)
+        }
     }
 
     private func summary(_ s: BrushSettings) -> String {

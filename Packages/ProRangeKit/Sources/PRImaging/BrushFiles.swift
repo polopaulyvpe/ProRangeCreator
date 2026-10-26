@@ -127,48 +127,13 @@ public enum ProcreateBrushImport {
         case noBrush
     }
 
-    /// Clés reconnues, avec leur traduction vers nos réglages.
+    /// Clés reconnues (noms relevés dans de vrais fichiers Procreate, version 4 du format), avec leur traduction.
     static let knownKeys: Set<String> = [
-        "name", "maxSize", "minSize", "paintSize", "maxOpacity", "minOpacity", "paintOpacity", "plotSpacing",
-        "dynamicsPressureSize", "dynamicsPressureOpacity", "shapeRotation", "textureScale", "grainScale",
-        "textureDepth", "grainDepth", "shapeOrientation", "hardness", "plotJitter",
+        "name", "maxSize", "minSize", "maxOpacity", "plotSpacing", "plotSpacingJitter", "plotJitter",
+        "dynamicsJitterSize", "dynamicsJitterOpacity", "shapeScatter", "shapeFlipXJitter", "shapeFlipYJitter",
+        "shapeAngle", "shapeRotation", "dynamicsPressureSize", "dynamicsPressureOpacity", "textureScale",
+        "grainDepth", "textureDepth", "bundledShapePath", "bundledGrainPath",
     ]
-
-    public static func read(_ url: URL) throws -> [BrushPreset] {
-        try read(data: Data(contentsOf: url), fallbackName: url.deletingPathExtension().lastPathComponent)
-    }
-
-    public static func read(data: Data, fallbackName: String) throws -> [BrushPreset] {
-        let zip = try ZipArchive(data)
-        // Un dossier par pinceau : celui de chaque Brush.archive ("" pour un .brush à plat).
-        // Un pinceau Procreate garde aussi sa copie de réinitialisation (dossier « Reset ») : ce n'est pas un autre pinceau.
-        let archives = zip.entries.filter { entry in
-            let components = entry.name.split(separator: "/").map { $0.lowercased() }
-            return components.last == "brush.archive" && !components.contains("reset") && !components.contains("__macosx")
-        }
-        guard !archives.isEmpty else { throw Failure.noBrush }
-        return try archives.map { archive in
-            let folder = (archive.name as NSString).deletingLastPathComponent
-            func image(_ base: String) -> ImportedImage? {
-                guard let entry = zip.entries.first(where: { e in
-                    (e.name as NSString).deletingLastPathComponent == folder
-                        && (e.name as NSString).lastPathComponent.lowercased() == base
-                }), let bytes = try? zip.data(entry) else { return nil }
-                return try? ImageDecoder.decode(data: Data(bytes))
-            }
-            let plist = try zip.data(archive)
-            var preset = parseArchive(Data(plist), fallbackName: archives.count == 1 ? fallbackName : folder)
-            if let shape = image("shape.png") {
-                preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme")
-                preset.mapped.append("Shape.png → forme")
-            }
-            if let grain = image("grain.png") {
-                preset.settings.grain = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
-                preset.mapped.append("Grain.png → grain")
-            }
-            return preset
-        }
-    }
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
     static func parseArchive(_ data: Data, fallbackName: String) -> BrushPreset {
@@ -187,23 +152,26 @@ public enum ProcreateBrushImport {
             return BrushPreset(name: name, settings: settings, ignored: ["aucun réglage trouvé"])
         }
         func number(_ key: String) -> Double? { (brush[key] as? NSNumber)?.doubleValue }
-
-        // L'index 0 de $objects est « $null » : un nom absent, pas un nom.
-        if let reference = brush["name"], let index = uidIndex(reference), index > 0, index < objects.count,
-           let text = objects[index] as? String, !text.isEmpty, text != "$null" {
-            name = text
-        } else if let text = brush["name"] as? String, !text.isEmpty {
-            name = text
+        /// Chaîne directe ou référencée ; nil pour « $null ».
+        func string(_ key: String) -> String? {
+            var text = brush[key] as? String
+            if text == nil, let reference = brush[key], let index = uidIndex(reference), index > 0, index < objects.count {
+                text = objects[index] as? String
+            }
+            guard let text, !text.isEmpty, text != "$null" else { return nil }
+            return text
         }
-        if let size = number("maxSize") ?? number("paintSize") {
-            settings.radiusDegrees = min(30, max(0.3, 0.3 + size * 20))
-            mapped.append("taille max \(fmt(size)) → rayon \(fmt(settings.radiusDegrees))°")
+
+        if let text = string("name") { name = text }
+        if let size = number("maxSize") {
+            settings.radiusDegrees = min(30, max(0.3, 0.3 + size * 6))
+            mapped.append("taille max → rayon \(fmt(settings.radiusDegrees))°")
         }
         if let minimum = number("minSize") {
             settings.minimumSize = min(1, max(0, minimum))
             mapped.append("taille min → \(fmt(settings.minimumSize))")
         }
-        if let opacity = number("maxOpacity") ?? number("paintOpacity") {
+        if let opacity = number("maxOpacity") {
             settings.opacity = min(1, max(0.02, opacity))
             mapped.append("opacité → \(fmt(settings.opacity))")
         }
@@ -212,38 +180,113 @@ public enum ProcreateBrushImport {
             settings.spacing = min(4, max(0.02, spacing * 2))
             mapped.append("espacement → \(fmt(settings.spacing)) rayon")
         }
+        if let jitter = number("plotSpacingJitter"), jitter > 0 {
+            settings.spacingJitter = min(1, jitter)
+            mapped.append("variation d'espacement → \(pct(jitter))")
+        }
+        if let jitter = number("plotJitter"), jitter > 0 {
+            settings.scatter = min(2, jitter)
+            mapped.append("dispersion → \(pct(jitter))")
+        }
+        if let jitter = number("dynamicsJitterSize"), jitter > 0 {
+            settings.sizeJitter = min(1, jitter)
+            mapped.append("variation de taille → \(pct(jitter))")
+        }
+        if let jitter = number("dynamicsJitterOpacity"), jitter > 0 {
+            settings.opacityJitter = min(1, jitter)
+            mapped.append("variation d'opacité → \(pct(jitter))")
+        }
+        if let scatter = number("shapeScatter"), scatter > 0 {
+            settings.rotationJitter = min(.pi, scatter * .pi / 2)
+            mapped.append("rotation aléatoire → ±\(Int(settings.rotationJitter * 180 / .pi))°")
+        }
+        if (brush["shapeFlipXJitter"] as? Bool) == true || (brush["shapeFlipYJitter"] as? Bool) == true {
+            settings.randomFlip = true
+            mapped.append("retournement aléatoire")
+        }
+        if let angle = number("shapeAngle") {
+            settings.shapeRotationDegrees = angle * 180 / .pi
+        }
+        if let rotation = number("shapeRotation") {
+            settings.followStroke = abs(rotation) >= 0.5
+            if settings.followStroke { mapped.append("forme qui suit le trait") }
+        }
         if let pressure = number("dynamicsPressureSize") {
-            settings.pressureAffectsSize = pressure > 0.05
+            settings.pressureAffectsSize = pressure > 0.2
             mapped.append("pression → taille : \(settings.pressureAffectsSize ? "oui" : "non")")
         }
         if let pressure = number("dynamicsPressureOpacity") {
-            settings.pressureAffectsOpacity = pressure > 0.05
+            settings.pressureAffectsOpacity = pressure > 0.2
             mapped.append("pression → opacité : \(settings.pressureAffectsOpacity ? "oui" : "non")")
         }
-        if let rotation = number("shapeRotation") {
-            settings.shapeRotationDegrees = abs(rotation) <= 1 ? rotation * 360 : rotation
-            mapped.append("rotation de la forme → \(fmt(settings.shapeRotationDegrees))°")
-        }
-        if let orientation = number("shapeOrientation") {
-            settings.followStroke = orientation > 0.5
-            mapped.append("forme qui suit le trait : \(settings.followStroke ? "oui" : "non")")
-        }
-        if let scale = number("textureScale") ?? number("grainScale") {
-            settings.grainScaleDegrees = min(30, max(0.2, 0.5 + scale * 10))
+        if let scale = number("textureScale") {
+            settings.grainScaleDegrees = min(30, max(0.2, 3 * scale))
             mapped.append("échelle du grain → \(fmt(settings.grainScaleDegrees))°")
         }
-        if let depth = number("textureDepth") ?? number("grainDepth") {
+        if let depth = number("grainDepth") ?? number("textureDepth") {
             settings.grainDepth = min(1, max(0, depth))
-            mapped.append("profondeur du grain → \(fmt(settings.grainDepth))")
+            mapped.append("profondeur du grain → \(pct(depth))")
         }
-        if let hardness = number("hardness") {
-            settings.hardness = min(1, max(0, hardness))
-            mapped.append("dureté → \(fmt(settings.hardness))")
+        // Textures internes de Procreate : nommées dans le fichier mais pas incluses ; remplacées par des substituts.
+        if let path = string("bundledShapePath") {
+            settings.shape = BuiltInBrushes.substituteShape
+            ignored.append("forme « \((path as NSString).lastPathComponent) » interne à Procreate, absente du fichier : substitut granuleux (importe une image pour la remplacer)")
         }
-        for key in brush.keys.sorted() where !knownKeys.contains(key) && !key.hasPrefix("$") {
-            ignored.append(key)
+        if let path = string("bundledGrainPath") {
+            settings.grain = BuiltInBrushes.substituteGrain
+            ignored.append("grain « \((path as NSString).lastPathComponent) » interne à Procreate, absent du fichier : substitut (importe une image pour le remplacer)")
+        }
+        let others = brush.keys.filter { !knownKeys.contains($0) && !$0.hasPrefix("$") }.count
+        if others > 0 {
+            ignored.append("\(others) autres réglages non gérés (mélange humide, dynamique de couleur, inclinaison, effilement, rendu…)")
         }
         return BrushPreset(name: name, settings: settings, mapped: mapped, ignored: ignored)
+    }
+
+    public static func read(_ url: URL) throws -> [BrushPreset] {
+        try read(data: Data(contentsOf: url), fallbackName: url.deletingPathExtension().lastPathComponent)
+    }
+
+    public static func read(data: Data, fallbackName: String) throws -> [BrushPreset] {
+        let zip = try ZipArchive(data)
+        // Un dossier par pinceau : celui de chaque Brush.archive ("" pour un .brush à plat).
+        // Un pinceau Procreate garde aussi sa copie de réinitialisation (dossier « Reset ») : ce n'est pas un autre pinceau.
+        let archives = zip.entries.filter { entry in
+            let components = entry.name.split(separator: "/").map { $0.lowercased() }
+            return components.last == "brush.archive" && !components.contains("reset") && !components.contains("__macosx")
+                && !isSecondary(components)
+        }
+        let hasSecondary = zip.entries.contains { isSecondary($0.name.split(separator: "/").map { $0.lowercased() }) }
+        guard !archives.isEmpty else { throw Failure.noBrush }
+        return try archives.map { archive in
+            let folder = (archive.name as NSString).deletingLastPathComponent
+            func image(_ base: String) -> ImportedImage? {
+                guard let entry = zip.entries.first(where: { e in
+                    (e.name as NSString).deletingLastPathComponent == folder
+                        && (e.name as NSString).lastPathComponent.lowercased() == base
+                }), let bytes = try? zip.data(entry) else { return nil }
+                return try? ImageDecoder.decode(data: Data(bytes))
+            }
+            let plist = try zip.data(archive)
+            var preset = parseArchive(Data(plist), fallbackName: archives.count == 1 ? fallbackName : folder)
+            if hasSecondary { preset.ignored.append("pinceau double : seul le pinceau principal est importé") }
+            if let shape = image("shape.png") {
+                preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme")
+                preset.mapped.append("Shape.png → forme")
+            }
+            if let grain = image("grain.png") {
+                preset.settings.grain = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
+                preset.mapped.append("Grain.png → grain")
+            }
+            return preset
+        }
+    }
+
+    /// Pinceau secondaire d'un pinceau double (dossier « Sub01 »…), que le moteur ne sait pas combiner.
+    static func isSecondary(_ components: [String]) -> Bool {
+        guard components.count >= 2 else { return false }
+        let folder = components[components.count - 2]
+        return folder.hasPrefix("sub") && folder.dropFirst(3).allSatisfy(\.isNumber) && folder.count > 3
     }
 
     /// Index d'une référence NSKeyedArchiver (CFKeyedArchiverUID, dont seule la description expose la valeur).
@@ -256,6 +299,7 @@ public enum ProcreateBrushImport {
     }
 
     private static func fmt(_ v: Double) -> String { String(format: "%.2f", v) }
+    private static func pct(_ v: Double) -> String { "\(Int((v * 100).rounded())) %" }
 }
 
 /// Format natif `.prbrush` : JSON, formes et grains en octets (niveaux de gris 8 bits) encodés en base64.
@@ -282,6 +326,13 @@ public enum NativeBrushFile {
         var grainDepth: Double
         var shape: Texture?
         var grain: Texture?
+        // Variations (ajoutées après la version 1 : absentes des anciens fichiers).
+        var spacingJitter: Double?
+        var scatter: Double?
+        var sizeJitter: Double?
+        var opacityJitter: Double?
+        var rotationJitter: Double?
+        var randomFlip: Bool?
     }
 
     public enum Failure: Error {
@@ -303,7 +354,9 @@ public enum NativeBrushFile {
                         pressureAffectsSize: s.pressureAffectsSize, pressureAffectsOpacity: s.pressureAffectsOpacity,
                         minimumSize: s.minimumSize, shapeRotationDegrees: s.shapeRotationDegrees, followStroke: s.followStroke,
                         grainScaleDegrees: s.grainScaleDegrees, grainDepth: s.grainDepth,
-                        shape: encode(s.shape), grain: encode(s.grain))
+                        shape: encode(s.shape), grain: encode(s.grain),
+                        spacingJitter: s.spacingJitter, scatter: s.scatter, sizeJitter: s.sizeJitter,
+                        opacityJitter: s.opacityJitter, rotationJitter: s.rotationJitter, randomFlip: s.randomFlip)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(file)
@@ -321,6 +374,12 @@ public enum NativeBrushFile {
         s.grainDepth = file.grainDepth
         s.shape = decode(file.shape)
         s.grain = decode(file.grain)
+        s.spacingJitter = file.spacingJitter ?? 0
+        s.scatter = file.scatter ?? 0
+        s.sizeJitter = file.sizeJitter ?? 0
+        s.opacityJitter = file.opacityJitter ?? 0
+        s.rotationJitter = file.rotationJitter ?? 0
+        s.randomFlip = file.randomFlip ?? false
         return BrushPreset(name: file.name, settings: s)
     }
 }

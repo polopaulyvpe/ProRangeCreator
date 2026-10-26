@@ -75,14 +75,17 @@ public struct DabTip: Sendable, Equatable {
     public var grainScale: Double
     /// Profondeur du grain dans [0, 1] : 0 = sans effet, 1 = la peinture ne passe que sur le blanc du grain.
     public var grainDepth: Double
+    /// Forme retournée (miroir horizontal, après la rotation).
+    public var flipX: Bool
 
     public init(shape: BrushTexture? = nil, grain: BrushTexture? = nil, rotation: Double = 0,
-                grainScale: Double = 0.05, grainDepth: Double = 1) {
+                grainScale: Double = 0.05, grainDepth: Double = 1, flipX: Bool = false) {
         self.shape = shape
         self.grain = grain
         self.rotation = rotation
         self.grainScale = grainScale
         self.grainDepth = grainDepth
+        self.flipX = flipX
     }
 
     /// Valeur du grain dans une direction : mélange des trois projections planes, poids |d|⁴ (sans couture).
@@ -103,7 +106,8 @@ public struct DabTip: Sendable, Equatable {
     public func shapeValue(at p: SIMD2<Double>, radius: Double) -> Float? {
         guard let shape else { return nil }
         let c = cos(rotation), s = sin(rotation)
-        let x = (p.x * c + p.y * s) / radius
+        let rotatedX = (p.x * c + p.y * s) / radius
+        let x = flipX ? -rotatedX : rotatedX
         let y = (-p.x * s + p.y * c) / radius
         guard abs(x) <= 1, abs(y) <= 1 else { return 0 }
         return shape.sample((x + 1) / 2, (1 - y) / 2, wrap: false)
