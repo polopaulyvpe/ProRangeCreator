@@ -148,6 +148,24 @@ struct BrushLibrarySheet: View {
                     }
                     Toggle("Inverser l'image importée (forme noire sur blanc)", isOn: $invertTexture)
                 }
+                ForEach(BuiltInBrushes.categories, id: \.self) { category in
+                    Section(category) {
+                        ForEach(BuiltInBrushes.all.filter { $0.category == category }) { builtIn in
+                            Button {
+                                session.settings = builtIn.settings
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    if let shape = builtIn.settings.shape { TexturePreview(texture: shape).frame(width: 36, height: 36) }
+                                    VStack(alignment: .leading) {
+                                        Text(builtIn.name)
+                                        Text(summary(builtIn.settings)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Section {
                     ForEach(brushes) { brush in
                         Button {
@@ -173,7 +191,7 @@ struct BrushLibrarySheet: View {
                     }
                     Button("Importer .brush, .brushset ou .prbrush…", systemImage: "square.and.arrow.down") { open(.brushes) }
                 } header: {
-                    Text("Bibliothèque")
+                    Text("Mes pinceaux")
                 } footer: {
                     Text("Import Procreate au mieux : forme, grain, taille, opacité, espacement, pression, rotation et grain sont repris ; le reste est listé comme ignoré.")
                 }
@@ -222,5 +240,32 @@ struct BrushLibrarySheet: View {
         if s.shape != nil { parts.append("forme") }
         if s.grain != nil { parts.append("grain") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Vignette d'une forme (blanc sur fond sombre), réduite à 64 × 64.
+struct TexturePreview: View {
+    let texture: BrushTexture
+
+    var body: some View {
+        if let image = Self.image(texture) {
+            Image(decorative: image, scale: 1).resizable().interpolation(.medium)
+                .background(Color.black).clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    static func image(_ texture: BrushTexture) -> CGImage? {
+        let side = 64
+        var bytes = [UInt8](repeating: 0, count: side * side)
+        for y in 0..<side {
+            for x in 0..<side {
+                let v = texture.sample((Double(x) + 0.5) / Double(side), (Double(y) + 0.5) / Double(side), wrap: false)
+                bytes[y * side + x] = UInt8(min(1, max(0, v)) * 255 + 0.5)
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: side,
+                       space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }
 }
