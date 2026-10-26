@@ -172,6 +172,8 @@ struct ToolOptions: View {
             .frame(width: 160)
         case .select:
             SelectionOptions(session: session)
+        case .effect:
+            Text("Peins l'effet filtré").font(.caption).foregroundStyle(.secondary).fixedSize()
         }
     }
 
