@@ -156,6 +156,11 @@ final class CanvasSession {
     var isDecodingImport = false
     var showBrushLibrary = false
     var showTimelapse = false
+    var interfaceHidden = false
+    var showPreferences = false
+    var preferences = Preferences.decode(UserDefaults.standard.data(forKey: "preferences")) {
+        didSet { UserDefaults.standard.set(preferences.encoded(), forKey: "preferences") }
+    }
     var timelapseEnabled = true
     var timelapseFrames = 0
     @ObservationIgnored var timelapse: TimelapseRecorder?
@@ -253,6 +258,7 @@ final class CanvasSession {
     }
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        let pressure = preferences.mappedPressure(pressure)
         lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
@@ -302,6 +308,7 @@ final class CanvasSession {
     }
 
     func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+        let pressure = preferences.mappedPressure(pressure)
         lastAspect = aspect
         if tool == .select, transform == nil {
             selectionMoved(ndc: ndc)
@@ -409,7 +416,7 @@ final class CanvasSession {
     func replaceStack(_ newStack: LayerStack) {
         strokeCancelled()
         stack = newStack
-        history = UndoRedoManager()
+        history = UndoRedoManager(maxSteps: preferences.historyLimit)
         if let canvas {
             canvas.replaceStack(newStack)
         } else {
@@ -604,15 +611,21 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     // MARK: - Historique (D6)
 
     @objc func handleUndoTap(_ gesture: UITapGestureRecognizer) {
-        session.undo()
+        session.perform(session.preferences.twoFingerDoubleTap)
     }
 
     @objc func handleRedoTap(_ gesture: UITapGestureRecognizer) {
-        session.redo()
+        session.perform(session.preferences.threeFingerDoubleTap)
+    }
+
+    @objc func handleFourFingerTap(_ gesture: UITapGestureRecognizer) {
+        session.strokeCancelled()
+        session.perform(session.preferences.fourFingerTap)
     }
 
     /// Maintien à deux doigts : annulation rapide continue.
     @objc func handleUndoHold(_ gesture: UILongPressGestureRecognizer) {
+        guard session.preferences.rapidUndoHold else { return }
         switch gesture.state {
         case .began:
             session.undo()
@@ -631,7 +644,8 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     // MARK: - Pipette
 
     @objc func handleEyedropper(_ gesture: UILongPressGestureRecognizer) {
-        guard let view = gesture.view as? CanvasMTKView, gesture.state == .began || gesture.state == .changed else { return }
+        guard session.preferences.eyedropperHold, let view = gesture.view as? CanvasMTKView,
+              gesture.state == .began || gesture.state == .changed else { return }
         session.strokeCancelled()
         session.pickColor(ndc: view.ndc(gesture.location(in: view)), aspect: Double(view.bounds.width / max(view.bounds.height, 1)))
     }
@@ -685,7 +699,11 @@ struct MetalCanvas: UIViewRepresentable {
         eyedropper.numberOfTouchesRequired = 1
         eyedropper.minimumPressDuration = 0.5
 
-        for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper] as [UIGestureRecognizer] {
+        let fourTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleFourFingerTap(_:)))
+        fourTap.numberOfTouchesRequired = 4
+        fourTap.numberOfTapsRequired = 1
+
+        for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper, fourTap] as [UIGestureRecognizer] {
             gesture.delegate = coordinator
             view.addGestureRecognizer(gesture)
         }
@@ -711,22 +729,35 @@ struct CanvasScreen: View {
             DistortHandlesOverlay(session: session)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: 12) {
-                CanvasToolbar(session: session)
-                TransformPanel(session: session)
-                DistortPanel(session: session)
-                FilterPanel(session: session)
-                SideControls(session: session)
+            if !session.interfaceHidden {
+                VStack(alignment: .leading, spacing: 12) {
+                    CanvasToolbar(session: session)
+                    TransformPanel(session: session)
+                    DistortPanel(session: session)
+                    FilterPanel(session: session)
+                    if !session.preferences.leftHanded { SideControls(session: session) }
+                }
+                .padding(12)
+                if session.preferences.leftHanded {
+                    // Mode gaucher : les curseurs passent à droite, à la même hauteur.
+                    SideControls(session: session)
+                        .padding(.top, 140)
+                        .padding(.trailing, 12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
             }
-            .padding(12)
         }
+        .preferredColorScheme(session.colorScheme)
         .dropDestination(for: Data.self) { items, _ in
             guard let data = items.first else { return false }
             session.loadImport(data: data, name: "Glisser-déposer")
             return true
         }
         .sheet(item: $session.pendingImport) { pending in ImportSheet(session: session, pending: pending) }
-        .task { session.restoreLastProject() }
+        .task {
+            session.applyLaunchPreferences()
+            session.restoreLastProject()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { session.saveForBackground() }
         }

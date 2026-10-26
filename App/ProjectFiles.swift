@@ -84,7 +84,8 @@ extension CanvasSession {
 
     func newProject() {
         if hasUnsavedChanges { saveProject(silently: true) }
-        replaceStack(LayerStack(width: Self.canvasWidth, height: Self.canvasWidth / 2))
+        replaceStack(LayerStack(width: preferences.canvasWidth, height: preferences.canvasWidth / 2))
+        setBlendSpace(preferences.blendSpace)
         projectName = "Sans titre"
         projectURL = nil
         projectCreatedAt = Date()
@@ -294,7 +295,10 @@ struct FileMenu: View {
             Divider()
             Button("Exporter…", systemImage: "square.and.arrow.up") { session.showExport = true }
             Button("Timelapse…", systemImage: "film") { session.showTimelapse = true }
+            Divider()
+            Button("Préférences…", systemImage: "gearshape") { session.showPreferences = true }
         }
+        .sheet(isPresented: $session.showPreferences) { PreferencesSheet(session: session) }
         .sheet(isPresented: $session.showTimelapse) { TimelapseSheet(session: session) }
         .fileImporter(isPresented: $session.showImporter, allowedContentTypes: importableTypes, allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { session.loadImport(urls: urls) }
