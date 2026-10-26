@@ -149,6 +149,66 @@ public final class StackCanvas {
         if let selection { selectionTexture.uploadAll(selection.layer) }
     }
 
+    // MARK: - Ajustements et filtres
+
+    /// Copie GPU du calque cible au début de l'aperçu d'un filtre (source de chaque aperçu).
+    private var filterOriginal: (any MTLTexture)?
+    private var filterResult: (any MTLTexture)?
+    private var filterEngineStorage: FilterEngine?
+
+    public var filterEngine: FilterEngine? {
+        if filterEngineStorage == nil, let device = queue?.device { filterEngineStorage = try? FilterEngine(device: device) }
+        return filterEngineStorage
+    }
+
+    /// Vrai si l'aperçu s'affiche en direct (chemin GPU : on écrit dans la texture du calque actif).
+    public var filterPreviewIsLive: Bool { filterOriginal != nil && usesFastPath }
+
+    /// Prépare l'aperçu d'un filtre sur le calque cible.
+    public func beginFilter() {
+        cancelStroke()
+        if needsRefresh { refresh() }
+        guard let engine = filterEngine, let target = paintTarget, target.format == .rgba16Float else { return }
+        filterOriginal = try? engine.upload(target)
+        filterResult = usesFastPath ? active?.texture : (try? engine.makeTexture(width: target.width, height: target.height))
+    }
+
+    /// Calcule le filtre ; en chemin GPU, le résultat s'affiche aussitôt.
+    public func previewFilter(_ operation: FilterOperation) {
+        guard let engine = filterEngine, let original = filterOriginal, let result = filterResult else { return }
+        try? engine.run(operation, source: original, destination: result)
+        if usesFastPath { active?.markChanged() }
+    }
+
+    /// Termine : applique le dernier aperçu au calque (deltas enregistrés, limités à la sélection) ou l'abandonne.
+    public func endFilter(apply: Bool) -> (layerID: UUID, deltas: [TileDelta])? {
+        defer {
+            filterOriginal = nil
+            filterResult = nil
+        }
+        guard let engine = filterEngine, let result = filterResult, let target = paintTarget else { return nil }
+        guard apply else {
+            if usesFastPath, let layer = stack.item(activeID)?.layer { activeDirty.formUnion(layer.allTileCoords) }
+            return nil
+        }
+        let deltas = engine.readBack(result, into: target, selection: selection)
+        if usesFastPath {
+            // Avec une sélection, la texture montre le filtre partout : on la recale sur le calque.
+            if let layer = stack.item(activeID)?.layer { activeDirty.formUnion(layer.allTileCoords) }
+        } else {
+            compositeDirty.formUnion(deltas.map(\.coord))
+        }
+        return (target.id, deltas)
+    }
+
+    /// Résultat du dernier aperçu, relu dans un calque à part (pour peindre l'effet au pinceau).
+    public func filterResultLayer() -> TiledLayer? {
+        guard let engine = filterEngine, let result = filterResult, let target = paintTarget else { return nil }
+        let copy = TiledLayer(name: "Effet", width: target.width, height: target.height, format: .rgba16Float)
+        _ = engine.readBack(result, into: copy, selection: nil)
+        return copy
+    }
+
     /// Contenu à montrer pendant une transformation (le calque actif limité à la sélection), ou nil pour arrêter.
     public func setFloating(_ layer: TiledLayer?) {
         guard let floatingTexture else { return }

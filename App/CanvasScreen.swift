@@ -15,6 +15,7 @@ enum PaintTool: String, CaseIterable {
     case gradient
     case select
     case liquify
+    case effect
 
     var label: String {
         switch self {
@@ -26,6 +27,7 @@ enum PaintTool: String, CaseIterable {
         case .gradient: "Dégradé"
         case .select: "Sélection"
         case .liquify: "Liquify"
+        case .effect: "Pinceau d'effet"
         }
     }
 
@@ -39,11 +41,12 @@ enum PaintTool: String, CaseIterable {
         case .gradient: "circle.lefthalf.striped.horizontal"
         case .select: "lasso"
         case .liquify: "tornado"
+        case .effect: "wand.and.rays"
         }
     }
 
     /// Outils qui lisent les pixels pendant le trait : chemin CPU.
-    var needsCPU: Bool { self == .smudge || self == .clone || self == .liquify }
+    var needsCPU: Bool { self == .smudge || self == .clone || self == .liquify || self == .effect }
 }
 
 /// État de l'écran Toile : un calque, l'historique, la vue, les outils et l'affichage.
@@ -133,6 +136,11 @@ final class CanvasSession {
     var quickShapeEnabled = true
     var distort: SphericalDistort?
     var showTextSheet = false
+
+    // Phase 6 (voir AdjustmentsUI.swift)
+    var activeFilter: FilterKind?
+    var filterSettings = FilterSettings()
+    var filterPreviewIsLive = false
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -260,6 +268,8 @@ final class CanvasSession {
         switch tool {
         case .smudge, .liquify:
             smudgePrevious = symmetry.images(of: d)
+        case .effect:
+            applyClone(centers, pressure: pressure)
         case .clone:
             beginClone(at: d)
             applyClone(centers, pressure: pressure)
@@ -291,7 +301,7 @@ final class CanvasSession {
         switch tool {
         case .smudge: applySmudge(centers, pressure: pressure)
         case .liquify: applyLiquify(centers, pressure: pressure)
-        case .clone: applyClone(centers, pressure: pressure)
+        case .clone, .effect: applyClone(centers, pressure: pressure)
         default:
             canvas.add(symmetricDabs(centers, pressure: pressure))
             noteQuickShapePoint(d)
@@ -662,6 +672,7 @@ struct CanvasScreen: View {
                 CanvasToolbar(session: session)
                 TransformPanel(session: session)
                 DistortPanel(session: session)
+                FilterPanel(session: session)
                 SideControls(session: session)
             }
             .padding(12)
@@ -760,6 +771,7 @@ struct CanvasToolbar: View {
 
             HStack(spacing: 16) {
                 ToolPicker(session: session)
+                AdjustmentsMenu(session: session)
 
                 Button {
                     session.showColorPicker = true

@@ -42,6 +42,11 @@ public final class TiledLayer {
     public var tilesAcross: Int { (width + TileSize.side - 1) / TileSize.side }
     public var tilesDown: Int { (height + TileSize.side - 1) / TileSize.side }
 
+    /// Toutes les coordonnées de tuiles de la toile.
+    public var allTileCoords: [TileCoord] {
+        (0..<tilesDown).flatMap { ty in (0..<tilesAcross).map { TileCoord(x: $0, y: ty) } }
+    }
+
     /// Tuiles réellement stockées (les autres sont transparentes).
     public var storedTiles: [TileCoord] { Array(tiles.keys) }
 
