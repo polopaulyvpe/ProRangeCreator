@@ -37,6 +37,7 @@
 | — | 2026-10-26 | Grille sphérique affichée **pendant les gestes de navigation** et messages « Annuler / Rétablir / Rien à annuler » | Sur une toile vide la sphère est uniformément blanche : sans repère, on ne voit pas la vue tourner ni l'annulation agir | Grille permanente |
 | D6 (révisée) | 2026-10-26 | **Tap simple** à 2 doigts = annuler, à 3 doigts = rétablir (comme Procreate) ; seul le Pencil dessine, un ou deux doigts naviguent | Retour de Paul sur l'iPad : le double tap ne marchait qu'une fois sur cinq | Double tap (D6 d'origine) |
 | — | 2026-10-26 | Composition des tuiles et envoi du calque actif **en parallèle sur tous les cœurs** ; vignettes de calques recalculées selon la version du contenu de chaque calque | Retour de Paul : grosse latence à l'ajout, à la suppression et au déplacement de calques (toute la toile recomposée sur un seul cœur) | Composition GPU des calques (gros chantier, à faire si ça ne suffit pas) |
+| — | 2026-10-26 | **Composition des caches d'affichage sur le GPU** (`GPUCompositor`, même mélange que le shader) ; CPU gardé pour groupes, masques, écrêtage | Banc d'essai sur la CI : recomposer la toile (ouverture, ajout ou changement de calque) dominait tout. Après : changement de calque 20 ms en 2K, 62 ms en 4K, 181 ms en 8K (5 calques peints) | Compositeur CPU parallèle seul (insuffisant) |
 
 ## Conséquences de l'iPad Air 5
 
