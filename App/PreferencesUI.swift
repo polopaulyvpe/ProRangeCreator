@@ -60,6 +60,7 @@ struct PreferencesSheet: View {
                     Picker("Tap à 4 doigts", selection: $session.preferences.fourFingerTap) { actions }
                     Toggle("Maintien à 2 doigts : annulation rapide", isOn: $session.preferences.rapidUndoHold)
                     Toggle("Appui long : pipette", isOn: $session.preferences.eyedropperHold)
+                    Toggle("Dessiner aussi au doigt (sinon : Pencil seul)", isOn: $session.preferences.fingerPainting)
                 }
                 Section {
                     Picker("Fusion des couleurs", selection: $session.preferences.blendSpace) {

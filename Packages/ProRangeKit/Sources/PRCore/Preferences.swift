@@ -50,6 +50,8 @@ public struct Preferences: Codable, Equatable, Sendable {
     public var rapidUndoHold = true
     /// Appui long d'un doigt : pipette.
     public var eyedropperHold = true
+    /// Le doigt peint aussi (sinon seul le Pencil dessine, et un doigt fait tourner la vue).
+    public var fingerPainting = false
     /// Fusion des nouveaux projets (D4).
     public var blendSpace: BlendSpace = .perceptual
     /// Courbe d'affichage au lancement (D12).
@@ -70,7 +72,7 @@ public struct Preferences: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case theme, leftHanded, pressureGamma, twoFingerDoubleTap, threeFingerDoubleTap, fourFingerTap
-        case rapidUndoHold, eyedropperHold, blendSpace, toneMapping, historyLimit, canvasWidth
+        case rapidUndoHold, eyedropperHold, fingerPainting, blendSpace, toneMapping, historyLimit, canvasWidth
     }
 
     public init(from decoder: any Decoder) throws {
@@ -84,6 +86,7 @@ public struct Preferences: Codable, Equatable, Sendable {
         fourFingerTap = (try? c.decodeIfPresent(GestureAction.self, forKey: .fourFingerTap)) ?? d.fourFingerTap
         rapidUndoHold = (try? c.decodeIfPresent(Bool.self, forKey: .rapidUndoHold)) ?? d.rapidUndoHold
         eyedropperHold = (try? c.decodeIfPresent(Bool.self, forKey: .eyedropperHold)) ?? d.eyedropperHold
+        fingerPainting = (try? c.decodeIfPresent(Bool.self, forKey: .fingerPainting)) ?? d.fingerPainting
         blendSpace = (try? c.decodeIfPresent(BlendSpace.self, forKey: .blendSpace)) ?? d.blendSpace
         toneMapping = (try? c.decodeIfPresent(ToneMapping.self, forKey: .toneMapping)) ?? d.toneMapping
         historyLimit = (try? c.decodeIfPresent(Int.self, forKey: .historyLimit)) ?? d.historyLimit

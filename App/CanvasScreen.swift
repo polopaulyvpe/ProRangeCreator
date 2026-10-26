@@ -533,19 +533,34 @@ final class CanvasMTKView: MTKView {
         return Double(touch.force / touch.maximumPossibleForce)
     }
 
+    /// Touche qui trace le trait en cours (le Pencil ; le doigt seulement si la préférence l'autorise).
+    private var drawingTouch: UITouch?
+
+    private var fingerPainting: Bool { coordinator?.session.preferences.fingerPainting ?? false }
+
+    private func canDraw(_ touch: UITouch) -> Bool { touch.type == .pencil || fingerPainting }
+
+    /// Un trait est en cours (la pipette au doigt ne doit pas l'interrompre : main posée sur l'écran).
+    var isDrawing: Bool { drawingTouch != nil }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let session = coordinator?.session else { return }
-        guard let touch = touches.first, (event?.allTouches?.count ?? 1) == 1 else {
+        // Doigts : réservés à la navigation (reconnaisseurs de gestes), sauf en mode « dessiner au doigt ».
+        if fingerPainting, (event?.allTouches?.filter { $0.type != .pencil }.count ?? 0) > 1 {
             session.strokeCancelled()
+            drawingTouch = nil
             return
         }
+        guard drawingTouch == nil, let touch = touches.first(where: canDraw) else { return }
+        drawingTouch = touch
         session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect, pressure: pressure(touch))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let session = coordinator?.session, let touch = touches.first else { return }
-        if (event?.allTouches?.count ?? 1) > 1 {
+        guard let session = coordinator?.session, let touch = drawingTouch, touches.contains(touch) else { return }
+        if touch.type != .pencil, (event?.allTouches?.filter { $0.type != .pencil }.count ?? 0) > 1 {
             session.strokeCancelled()
+            drawingTouch = nil
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
@@ -554,11 +569,22 @@ final class CanvasMTKView: MTKView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = drawingTouch, touches.contains(touch) else { return }
+        drawingTouch = nil
         coordinator?.session.strokeEnded()
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = drawingTouch, touches.contains(touch) else { return }
+        drawingTouch = nil
         coordinator?.session.strokeCancelled()
+    }
+
+    /// Navigation au doigt : un doigt (ou deux) fait tourner la vue quand seul le Pencil dessine.
+    weak var panGesture: UIPanGestureRecognizer?
+
+    func applyTouchPreferences() {
+        panGesture?.minimumNumberOfTouches = fingerPainting ? 2 : 1
     }
 }
 
@@ -682,6 +708,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     @objc func handleEyedropper(_ gesture: UILongPressGestureRecognizer) {
         guard session.preferences.eyedropperHold, let view = gesture.view as? CanvasMTKView,
+              !view.isDrawing,
               gesture.state == .began || gesture.state == .changed else { return }
         session.strokeCancelled()
         session.pickColor(ndc: view.ndc(gesture.location(in: view)), aspect: Double(view.bounds.width / max(view.bounds.height, 1)))
@@ -719,8 +746,9 @@ struct MetalCanvas: UIViewRepresentable {
 
         let pinch = UIPinchGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handlePinch(_:)))
         let pan = UIPanGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handlePan(_:)))
-        pan.minimumNumberOfTouches = 2
+        pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 2
+        view.panGesture = pan
         let rotation = UIRotationGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleRotation(_:)))
 
         let undoTap = UITapGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleUndoTap(_:)))
@@ -742,12 +770,18 @@ struct MetalCanvas: UIViewRepresentable {
 
         for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper, fourTap] as [UIGestureRecognizer] {
             gesture.delegate = coordinator
+            // Gestes au doigt seulement : le Pencil ne fait que dessiner.
+            gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
             view.addGestureRecognizer(gesture)
         }
+        view.applyTouchPreferences()
         return view
     }
 
-    func updateUIView(_ uiView: CanvasMTKView, context: Context) {}
+    func updateUIView(_ uiView: CanvasMTKView, context: Context) {
+        _ = session.preferences.fingerPainting // observé : la préférence s'applique tout de suite
+        uiView.applyTouchPreferences()
+    }
 }
 
 // MARK: - Écran

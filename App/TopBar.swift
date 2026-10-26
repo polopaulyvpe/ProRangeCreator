@@ -473,14 +473,14 @@ struct ActionsPanel: View {
     private var helpTab: some View {
         PanelSection {
             VStack(alignment: .leading, spacing: 8) {
-                helpLine("1 doigt ou Pencil", "peindre")
-                helpLine("2 doigts glissés", "regarder autour (tourner la sphère)")
+                helpLine("Pencil", session.preferences.fingerPainting ? "peindre (le doigt aussi)" : "peindre (seul le Pencil dessine)")
+                helpLine(session.preferences.fingerPainting ? "2 doigts glissés" : "1 ou 2 doigts glissés", "regarder autour (tourner la sphère)")
                 helpLine("Pincer", "zoomer (champ de vision)")
                 helpLine("2 doigts tournés", "pencher la vue (horizon déverrouillé)")
                 helpLine("Double tap 2 doigts", session.preferences.twoFingerDoubleTap.label)
                 helpLine("Double tap 3 doigts", session.preferences.threeFingerDoubleTap.label)
                 helpLine("Tap 4 doigts", session.preferences.fourFingerTap.label)
-                helpLine("Appui long", "pipette")
+                helpLine("Appui long au doigt", "pipette")
                 helpLine("Déplier", "voir tout le panorama à plat")
             }
             .padding(14)
