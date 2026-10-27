@@ -420,13 +420,13 @@ public enum NativeBrushFile {
         ("pressureSizeAmount", \.pressureSizeAmount), ("pressureOpacityAmount", \.pressureOpacityAmount),
         ("tiltOpacity", \.tiltOpacity), ("tiltSize", \.tiltSize), ("tiltAngleDegrees", \.tiltAngleDegrees),
         ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
-        ("maxOpacity", .maxOpacity), ("minOpacity", .minOpacity),
+        ("maxOpacity", \.maxOpacity), ("minOpacity", \.minOpacity),
     ] }
 
     /// Réglages oui / non de l'Atelier, par nom.
     static var flagKeys: [(String, WritableKeyPath<BrushSettings, Bool>)] { [
         ("randomizeRotation", \.randomizeRotation), ("grainMoving", \.grainMoving),
-        ("grainOffsetJitter", .grainOffsetJitter), ("grainInverted", .grainInverted),
+        ("grainOffsetJitter", \.grainOffsetJitter), ("grainInverted", \.grainInverted),
     ] }
 
     static func encode(_ texture: BrushTexture?) -> Texture? {

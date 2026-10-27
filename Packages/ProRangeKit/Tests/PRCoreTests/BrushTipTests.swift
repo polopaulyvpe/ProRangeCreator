@@ -117,7 +117,7 @@ final class BrushTipTests: XCTestCase {
         XCTAssertEqual(squashed.coverage(at: frame.unproject([0.18, 0])), 1, accuracy: 1e-5, "largeur intacte")
 
         // Grain mobile : lu dans le repère du dab (même valeur autour de deux centres différents).
-        let noisy = BrushTexture(name: "bruit", size: 8, values: (0..<64).map { Float((-e * 29) % 64) / 63 })
+        let noisy = BrushTexture(name: "bruit", size: 8, values: (0..<64).map { Float(($0 * 29) % 64) / 63 })
         let tip = DabTip(grain: noisy, grainScale: 0.1, grainMoving: true, grainOffset: [0.25, 0.5])
         let a = tip.grainValue(at: center, local: [0.03, -0.02])
         let b = tip.grainValue(at: Equirect.direction(latitude: -0.8, longitude: 2), local: [0.03, -0.02])
