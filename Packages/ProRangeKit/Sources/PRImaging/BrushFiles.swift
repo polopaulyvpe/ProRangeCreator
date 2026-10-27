@@ -137,7 +137,7 @@ public enum ProcreateBrushImport {
         "shapeRoundness", "shapeCount", "shapeCountJitter", "shapeRandomise", "textureMovement", "textureRotation",
         "grainDepthMinimum", "grainDepthJitter", "textureOffsetJitter", "textureContrast", "textureBrightness", "textureInverted",
         "dynamicsSpeedSize", "dynamicsSpeedOpacity", "dynamicsTiltOpacity", "dynamicsTiltSize", "dynamicsTiltAngle", "minOpacity",
-        "authorName",
+        "authorName", "plotSmoothing", "plotMovingAverageStabilization", "plotFFTSmoothingAmount", "dynamicsPressureSmoothing",
     ]
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
@@ -281,6 +281,23 @@ public enum ProcreateBrushImport {
         if let tilt = number("dynamicsTiltSize"), tilt > 0 { settings.tiltSize = min(2, tilt) }
         if let angle = number("dynamicsTiltAngle") { settings.tiltAngleDegrees = min(89, max(0, angle * 90)) }
         if let minimum = number("minOpacity") { settings.minOpacity = min(1, max(0.02, minimum)) }
+        // Stabilisation : StreamLine, stabilisation (moyenne glissante), filtrage du mouvement, lissage de la pression.
+        if let streamLine = number("plotSmoothing"), streamLine > 0 {
+            settings.streamLine = min(1, streamLine)
+            mapped.append("StreamLine → \(pct(streamLine))")
+        }
+        if let stabilization = number("plotMovingAverageStabilization"), stabilization > 0 {
+            settings.stabilization = min(1, stabilization)
+            mapped.append("stabilisation → \(pct(stabilization))")
+        }
+        if let filtering = number("plotFFTSmoothingAmount"), filtering > 0 {
+            settings.motionFiltering = min(1, filtering)
+            mapped.append("filtrage du mouvement → \(pct(filtering))")
+        }
+        if let smoothing = number("dynamicsPressureSmoothing"), smoothing > 0 {
+            settings.pressureSmoothing = min(1, smoothing)
+            mapped.append("lissage de la pression → \(pct(smoothing))")
+        }
         if let scale = number("textureScale") {
             settings.grainScaleDegrees = min(30, max(0.2, 3 * scale))
             mapped.append("échelle du grain → \(fmt(settings.grainScaleDegrees))°")
@@ -412,6 +429,8 @@ public enum NativeBrushFile {
 
     /// Réglages numériques de l'Atelier, par nom.
     static var numericKeys: [(String, WritableKeyPath<BrushSettings, Double>)] { [
+        ("streamLine", \.streamLine), ("stabilization", \.stabilization), ("motionFiltering", \.motionFiltering),
+        ("pressureSmoothing", \.pressureSmoothing),
         ("taperStartLength", \.taperStartLength), ("taperSize", \.taperSize), ("taperOpacity", \.taperOpacity),
         ("shapeRoundness", \.shapeRoundness), ("stampCountJitter", \.stampCountJitter),
         ("grainRotationDegrees", \.grainRotationDegrees), ("grainDepthMinimum", \.grainDepthMinimum),

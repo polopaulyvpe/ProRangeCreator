@@ -6,12 +6,14 @@ import UniformTypeIdentifiers
 
 /// Sections de l'Atelier de pinceaux, dans l'ordre de Procreate.
 enum StudioSection: String, CaseIterable, Identifiable {
-    case taper, shape, grain, rendering, wetMix, colorDynamics, dynamics, pencil, properties, materials, preview, about
+    case strokePath, stabilization, taper, shape, grain, rendering, wetMix, colorDynamics, dynamics, pencil, properties, materials, preview, about
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .strokePath: "Tracé du trait"
+        case .stabilization: "Stabilisation"
         case .taper: "Effilement"
         case .shape: "Forme"
         case .grain: "Grain"
@@ -29,6 +31,8 @@ enum StudioSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .strokePath: "point.topleft.down.to.point.bottomright.curvepath"
+        case .stabilization: "waveform.path"
         case .taper: "scribble"
         case .shape: "seal.fill"
         case .grain: "square.grid.3x3.fill"
@@ -175,6 +179,8 @@ struct BrushStudioView: View {
 
     @ViewBuilder private var content: some View {
         switch section {
+        case .strokePath: strokePath
+        case .stabilization: stabilization
         case .taper: taper
         case .shape: shape
         case .grain: grain
@@ -273,13 +279,43 @@ struct BrushStudioView: View {
         }
     }
 
-    private var dynamics: some View {
+    private var strokePath: some View {
+        StudioCard {
+            StudioSlider("Espacement", value: $draft.spacing, range: 0.02...4) { "\(Int($0 * 50)) %" }
+            StudioSlider("Variation d'espacement", value: $draft.spacingJitter, range: 0...1)
+            StudioSlider("Dispersion latérale", value: $draft.scatter, range: 0...2)
+        }
+    }
+
+    private var stabilization: some View {
         Group {
             StudioCard {
-                StudioSlider("Espacement", value: $draft.spacing, range: 0.02...4) { "\(Int($0 * 50)) %" }
-                StudioSlider("Variation d'espacement", value: $draft.spacingJitter, range: 0...1)
-                StudioSlider("Dispersion latérale", value: $draft.scatter, range: 0...2)
+                Text("StreamLine").font(.headline)
+                StudioSlider("Quantité", value: $draft.streamLine, range: 0...1)
+                Text("Le trait suit la main avec un léger retard, ce qui lisse les courbes ; il rattrape la main au lever du stylet.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
+            StudioCard {
+                Text("Stabilisation").font(.headline)
+                StudioSlider("Quantité", value: $draft.stabilization, range: 0...1)
+                Text("Moyenne des derniers points : gomme les tremblements, surtout quand on trace lentement.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            StudioCard {
+                Text("Filtrage du mouvement").font(.headline)
+                StudioSlider("Quantité", value: $draft.motionFiltering, range: 0...1)
+                Text("Ignore les petits écarts de la main autour du trait.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            StudioCard {
+                Text("Pression").font(.headline)
+                StudioSlider("Lissage", value: $draft.pressureSmoothing, range: 0...1)
+            }
+        }
+    }
+
+    private var dynamics: some View {
+        Group {
             StudioCard {
                 StudioSlider("Vitesse → taille", value: $draft.speedSize, range: -1...1, signed: true)
                 StudioSlider("Vitesse → opacité", value: $draft.speedOpacity, range: -1...1, signed: true)
@@ -479,19 +515,49 @@ final class BrushPadUIView: UIView {
         layer.contents = painter?.image()
     }
 
+    /// Même stabilisation que sur la toile ; l'unité est la demi-hauteur du bloc.
+    private var stabilizer: StrokeStabilizer?
+    private var lastTilt = 0.0
+    private var lastTime: TimeInterval = 0
+
     private func add(_ touch: UITouch) {
         let p = touch.location(in: self)
         let pressure = touch.type == .pencil && touch.maximumPossibleForce > 0 ? Double(touch.force / touch.maximumPossibleForce) : 1
         let tilt = touch.type == .pencil ? min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2))) : 0
-        painter?.addPoint([Double(p.x * scale), Double(p.y * scale)], pressure: pressure, tilt: tilt, time: touch.timestamp)
+        var point = SIMD2<Double>(Double(p.x * scale), Double(p.y * scale))
+        var pressed = pressure
+        if stabilizer != nil {
+            let stable = stabilizer!.add(point, pressure: pressure)
+            point = stable.point
+            pressed = stable.pressure
+        }
+        lastTilt = tilt
+        lastTime = touch.timestamp
+        painter?.addPoint(point, pressure: pressed, tilt: tilt, time: touch.timestamp)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         ensurePainter()
         guard let touch = touches.first else { return }
         painter?.begin(seed: UInt64.random(in: 1...UInt64.max))
+        stabilizer = settings.stabilizer.isActive
+            ? StrokeStabilizer(settings: settings.stabilizer, unit: Double(bounds.height * scale) / 2) : nil
         add(touch)
         refresh()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard var pending = stabilizer else { return }
+        stabilizer = nil
+        for point in pending.finish(step: 1) {
+            lastTime += 0.002
+            painter?.addPoint(point.point, pressure: point.pressure, tilt: lastTilt, time: lastTime)
+        }
+        refresh()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        stabilizer = nil
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {

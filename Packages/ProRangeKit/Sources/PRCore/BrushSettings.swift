@@ -22,6 +22,17 @@ public struct BrushSettings: Equatable, Sendable {
     /// Dispersion latérale, en fraction du diamètre, de part et d'autre du trait.
     public var scatter: Double = 0
 
+    // MARK: Stabilisation (voir `StrokeStabilizer`), chacune dans [0, 1]
+    public var streamLine: Double = 0
+    public var stabilization: Double = 0
+    public var motionFiltering: Double = 0
+    public var pressureSmoothing: Double = 0
+
+    public var stabilizer: StrokeStabilizer.Settings {
+        StrokeStabilizer.Settings(streamLine: streamLine, stabilization: stabilization,
+                                  motionFiltering: motionFiltering, pressureSmoothing: pressureSmoothing)
+    }
+
     // MARK: Effilement (début du trait)
     /// Longueur de l'effilement, en diamètres de pinceau (0 = aucun).
     public var taperStartLength: Double = 0

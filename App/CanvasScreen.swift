@@ -186,6 +186,8 @@ final class CanvasSession {
     @ObservationIgnored var timelapseCaptureRequested = false
     @ObservationIgnored var previousDabCenter: Vec3?
     @ObservationIgnored var strokeRandom = StrokeRandom(seed: 1)
+    /// Stabilisation du trait en cours (nil si le pinceau n'en a pas).
+    @ObservationIgnored var stabilizer: StrokeStabilizer?
     // Contexte du trait en cours (effilement, vitesse, inclinaison, tirages du grain et de la forme).
     @ObservationIgnored var strokeDistance = 0.0
     @ObservationIgnored var strokeSpeed = 0.0
@@ -287,7 +289,10 @@ final class CanvasSession {
 
     func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0) {
         strokeTilt = tilt
-        let pressure = preferences.mappedPressure(pressure)
+        let mapped = preferences.mappedPressure(pressure)
+        // Stabilisation (Atelier) : un stabilisateur neuf par trait, pour les outils qui peignent.
+        stabilizer = stabilizesStroke && settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer) : nil
+        let (ndc, pressure) = stabilize(ndc, mapped)
         lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
@@ -342,9 +347,10 @@ final class CanvasSession {
         }
     }
 
-    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0) {
+    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, alreadyMapped: Bool = false) {
         strokeTilt = tilt
-        let pressure = preferences.mappedPressure(pressure)
+        let mapped = alreadyMapped ? pressure : preferences.mappedPressure(pressure)
+        let (ndc, pressure) = alreadyMapped ? (ndc, mapped) : stabilize(ndc, mapped)
         lastAspect = aspect
         if tool == .select, transform == nil {
             selectionMoved(ndc: ndc)
@@ -405,6 +411,13 @@ final class CanvasSession {
     }
 
     func strokeEnded() {
+        // StreamLine : le trait rattrape la dernière position de la main avant de se terminer.
+        if var pending = stabilizer {
+            stabilizer = nil
+            for point in pending.finish(step: 0.004) {
+                strokeMoved(ndc: point.point, aspect: lastAspect, pressure: point.pressure, tilt: strokeTilt, alreadyMapped: true)
+            }
+        }
         stopQuickShapeWatch()
         if distort != nil {
             activeCorner = nil
@@ -429,7 +442,20 @@ final class CanvasSession {
 
     /// Second doigt posé ou pipette : le trait commencé disparaît sans laisser de trace.
     func strokeCancelled() {
+        stabilizer = nil
         canvas?.cancelStroke()
+    }
+
+    /// Outils dont le trait est stabilisé (pas la sélection, ni les poignées de transformation).
+    private var stabilizesStroke: Bool {
+        transform == nil && distort == nil && [PaintTool.brush, .eraser, .smudge, .clone, .effect, .liquify].contains(tool)
+    }
+
+    /// Point et pression stabilisés (inchangés sans stabilisateur).
+    private func stabilize(_ ndc: SIMD2<Double>, _ pressure: Double) -> (SIMD2<Double>, Double) {
+        guard stabilizer != nil else { return (ndc, pressure) }
+        let result = stabilizer!.add(ndc, pressure: pressure)
+        return (result.point, result.pressure)
     }
 
     // MARK: - Historique
