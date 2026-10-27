@@ -186,16 +186,29 @@ struct ViewModeControl: View {
 struct SideRail: View {
     @Bindable var session: CanvasSession
 
+    /// Bornes réglées dans l'Atelier (Propriétés).
+    private var sizeRange: ClosedRange<Double> {
+        let s = session.settings
+        let low = max(0.05, min(s.minSizeDegrees, s.maxSizeDegrees - 0.1))
+        return low...max(low + 0.1, s.maxSizeDegrees)
+    }
+
+    private var opacityRange: ClosedRange<Double> {
+        let s = session.settings
+        let low = max(0, min(s.minOpacity, s.maxOpacity - 0.01))
+        return low...max(low + 0.01, s.maxOpacity)
+    }
+
     var body: some View {
         VStack(spacing: 18) {
-            RailSlider(value: $session.settings.radiusDegrees, range: 0.3...30, curve: 2) { session.showSizePreview = $0 }
+            RailSlider(value: $session.settings.radiusDegrees, range: sizeRange, curve: 2) { session.showSizePreview = $0 }
             Button {
                 session.showToast("Appui long sur la toile : pipette")
             } label: {
                 RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.85), lineWidth: 2).frame(width: 26, height: 26)
             }
             .buttonStyle(.plain)
-            RailSlider(value: $session.settings.opacity, range: 0.02...1)
+            RailSlider(value: $session.settings.opacity, range: opacityRange)
             Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!session.canUndo)
             Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }

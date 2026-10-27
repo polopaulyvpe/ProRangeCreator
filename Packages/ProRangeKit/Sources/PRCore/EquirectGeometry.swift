@@ -78,6 +78,6 @@ public struct DabEvaluator: Sendable {
             ?? Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
                                                   hardness: dab.hardness, pixelSize: pixelAngle))
         guard base > 0, tip.grain != nil else { return base }
-        return base * (1 - Float(tip.grainDepth) * (1 - tip.grainValue(at: d)))
+        return base * (1 - Float(tip.grainDepth) * (1 - tip.grainValue(at: d, local: p)))
     }
 }

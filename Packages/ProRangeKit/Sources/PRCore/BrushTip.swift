@@ -77,9 +77,21 @@ public struct DabTip: Sendable, Equatable {
     public var grainDepth: Double
     /// Forme retournée (miroir horizontal, après la rotation).
     public var flipX: Bool
+    /// Rondeur : 1 = forme telle quelle, moins = écrasée dans le sens de sa hauteur.
+    public var roundness: Double
+    /// Grain mobile : lu dans le repère du tampon (il suit chaque dab), sinon fixé à la sphère.
+    public var grainMoving: Bool
+    public var grainRotation: Double
+    /// Décalage du grain mobile, en motifs.
+    public var grainOffset: SIMD2<Double>
 
     public init(shape: BrushTexture? = nil, grain: BrushTexture? = nil, rotation: Double = 0,
-                grainScale: Double = 0.05, grainDepth: Double = 1, flipX: Bool = false) {
+                grainScale: Double = 0.05, grainDepth: Double = 1, flipX: Bool = false, roundness: Double = 1,
+                grainMoving: Bool = false, grainRotation: Double = 0, grainOffset: SIMD2<Double> = .zero) {
+        self.roundness = roundness
+        self.grainMoving = grainMoving
+        self.grainRotation = grainRotation
+        self.grainOffset = grainOffset
         self.shape = shape
         self.grain = grain
         self.rotation = rotation
@@ -88,10 +100,17 @@ public struct DabTip: Sendable, Equatable {
         self.flipX = flipX
     }
 
-    /// Valeur du grain dans une direction : mélange des trois projections planes, poids |d|⁴ (sans couture).
-    public func grainValue(at d: Vec3) -> Float {
+    /// Valeur du grain. Texturé : dans la direction `d`, mélange des trois projections planes, poids |d|⁴ (sans couture).
+    /// Mobile : au point `p` du plan tangent du dab (radians), tourné et décalé.
+    public func grainValue(at d: Vec3, local p: SIMD2<Double> = .zero) -> Float {
         guard let grain else { return 1 }
         let s = 1 / grainScale
+        if grainMoving {
+            let c = cos(grainRotation), sn = sin(grainRotation)
+            let u = (p.x * c + p.y * sn) * s + grainOffset.x
+            let v = (-p.x * sn + p.y * c) * s + grainOffset.y
+            return grain.sample(u, v, wrap: true)
+        }
         var w = simd_abs(d)
         w = w * w
         w = w * w
@@ -108,7 +127,7 @@ public struct DabTip: Sendable, Equatable {
         let c = cos(rotation), s = sin(rotation)
         let rotatedX = (p.x * c + p.y * s) / radius
         let x = flipX ? -rotatedX : rotatedX
-        let y = (-p.x * s + p.y * c) / radius
+        let y = (-p.x * s + p.y * c) / radius / max(0.05, roundness)
         guard abs(x) <= 1, abs(y) <= 1 else { return 0 }
         return shape.sample((x + 1) / 2, (1 - y) / 2, wrap: false)
     }

@@ -16,75 +16,9 @@ enum StrokePreview {
         return image
     }
 
-    private static func render(_ s: BrushSettings) -> CGImage? {
-        let w = width, h = height
-        var alpha = [Float](repeating: 0, count: w * h)
-        let maxRadius: Double = s.spacing >= 10 ? 22 : 15
-        let isStamp = s.spacing >= 10
-        var x: Double = isStamp ? Double(w) / 2 : 14
-        var previous: (Double, Double)?
-        var random = StrokeRandom(seed: 7)
-        while x <= Double(w) - 14 {
-            let r = s.hasJitter ? random.dab() : .none
-            let t = isStamp ? 0.5 : (x - 14) / Double(w - 28)
-            var y = Double(h) / 2 + sin(t * 2 * .pi) * Double(h) * 0.18
-            let pressure = isStamp ? 1 : 0.35 + 0.65 * sin(t * .pi)
-            let radius = maxRadius * (s.pressureAffectsSize ? pressure : 1) * (1 - s.sizeJitter * r.size)
-            let opacity = Float(s.opacity * (s.pressureAffectsOpacity ? pressure : 1) * (1 - s.opacityJitter * r.opacity))
-            y += s.scatter * 2 * radius * (r.scatter * 2 - 1)
-            var angle = s.shapeRotationDegrees * .pi / 180
-            if s.followStroke, let p = previous { angle += atan2(-(y - p.1), x - p.0) }
-            angle += s.rotationJitter * (r.rotation * 2 - 1)
-            stamp(&alpha, w: w, h: h, cx: x, cy: y, radius: max(1.5, radius), opacity: opacity, angle: angle,
-                  flip: s.randomFlip && r.flip, settings: s)
-            previous = (x, y)
-            if isStamp { break }
-            x += max(0.8, s.spacing(radius: radius, random: random.next()))
-        }
-        var bytes = [UInt8](repeating: 0, count: w * h * 4)
-        for i in 0..<(w * h) {
-            let a = UInt8(min(1, alpha[i]) * 255 + 0.5)
-            bytes[i * 4] = a
-            bytes[i * 4 + 1] = a
-            bytes[i * 4 + 2] = a
-            bytes[i * 4 + 3] = a
-        }
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: space,
-                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-    }
-
-    private static func stamp(_ alpha: inout [Float], w: Int, h: Int, cx: Double, cy: Double, radius: Double, opacity: Float,
-                              angle: Double, flip: Bool, settings s: BrushSettings) {
-        let reach = s.shape != nil ? radius * 1.42 : radius
-        let c = cos(angle), sn = sin(angle)
-        let y0 = max(0, Int(cy - reach)), y1 = min(h - 1, Int(cy + reach))
-        let x0 = max(0, Int(cx - reach)), x1 = min(w - 1, Int(cx + reach))
-        guard y0 <= y1, x0 <= x1 else { return }
-        for py in y0...y1 {
-            for px in x0...x1 {
-                let dx = (Double(px) + 0.5 - cx) / radius
-                let dy = -(Double(py) + 0.5 - cy) / radius
-                var a: Float
-                if let shape = s.shape {
-                    let rx = dx * c + dy * sn, qy = -dx * sn + dy * c
-                    let qx = flip ? -rx : rx
-                    guard abs(qx) <= 1, abs(qy) <= 1 else { continue }
-                    a = shape.sample((qx + 1) / 2, (1 - qy) / 2, wrap: false)
-                } else {
-                    a = Float(SphericalRasterizer.coverage(distance: (dx * dx + dy * dy).squareRoot(), radius: 1,
-                                                           hardness: s.hardness, pixelSize: 1 / radius))
-                }
-                if let grain = s.grain {
-                    let g = grain.sample(Double(px) / 48, Double(py) / 48, wrap: true)
-                    a *= 1 - Float(s.grainDepth) * (1 - g)
-                }
-                guard a > 0 else { continue }
-                let i = py * w + px
-                alpha[i] += a * opacity * (1 - alpha[i])
-            }
-        }
+    /// Même calcul que la toile (`FlatBrushPainter`), rayon de 15 pixels (22 pour un tampon).
+    static func render(_ s: BrushSettings) -> CGImage? {
+        FlatBrushPainter.preview(s, width: width, height: height, radiusPixels: s.spacing >= 10 ? 22 : 15)
     }
 }
 
@@ -174,16 +108,33 @@ struct BrushPanel: View {
                                 .background(RoundedRectangle(cornerRadius: 12).fill(isCurrent(entry) ? Color.accentColor : .clear))
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Modifier dans l'Atelier", systemImage: "slider.horizontal.3") {
+                                    session.settings = entry.settings
+                                    session.showBrushes = false
+                                    session.showBrushStudio = true
+                                }
+                            }
                         }
                     }
                 }
             }
-            Button {
-                session.showBrushes = false
-                session.showBrushLibrary = true
-            } label: {
-                Label("Forme, grain et réglages du pinceau…", systemImage: "slider.horizontal.3")
-                    .font(.callout)
+            HStack {
+                Button {
+                    session.showBrushes = false
+                    session.showBrushStudio = true
+                } label: {
+                    Label("Atelier de pinceaux…", systemImage: "slider.horizontal.3")
+                        .font(.callout)
+                }
+                Spacer()
+                Button {
+                    session.showBrushes = false
+                    session.showBrushLibrary = true
+                } label: {
+                    Label("Importer, enregistrer…", systemImage: "square.and.arrow.down")
+                        .font(.callout)
+                }
             }
         }
         .padding(20)

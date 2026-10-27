@@ -101,6 +101,7 @@ public enum BuiltInBrushes {
                               pressureAffectsSize: pressureSize, pressureAffectsOpacity: pressureOpacity, minimumSize: 0.3)
         s.shape = shape
         s.grain = grain
+        s.grainSource = grain
         s.followStroke = follow
         s.grainScaleDegrees = grainScale
         s.grainDepth = grainDepth

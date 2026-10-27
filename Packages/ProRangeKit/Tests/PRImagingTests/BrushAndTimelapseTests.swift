@@ -26,6 +26,11 @@ final class FakeBrush: NSObject, NSCoding {
         coder.encode("Procreate_Library/Craie_Grain.png", forKey: "bundledGrainPath")
         coder.encode(1.0, forKey: "dynamicsPressureSize")
         coder.encode(0.6, forKey: "textureDepth")
+        coder.encode(0.5, forKey: "shapeRoundness")
+        coder.encode(1.0, forKey: "textureMovement")
+        coder.encode(-0.45, forKey: "textureContrast")
+        coder.encode(0.2, forKey: "dynamicsSpeedSize")
+        coder.encode(true, forKey: "shapeRandomise")
         coder.encode(3.0, forKey: "wetMix")
     }
 }
@@ -108,7 +113,13 @@ final class BrushAndTimelapseTests: XCTestCase {
             XCTAssertEqual(shape.size, 32)
             XCTAssertGreaterThan(shape.values[16 * 32 + 16], 0.9, "disque blanc au centre")
             XCTAssertLessThan(shape.values[0], 0.1)
-            XCTAssertEqual(preset.settings.grain, BuiltInBrushes.substituteGrain, "grain interne remplacé par le substitut")
+            XCTAssertEqual(preset.settings.grainSource, BuiltInBrushes.substituteGrain, "grain interne remplacé par le substitut")
+            XCTAssertNotNil(preset.settings.grain, "grain dérivé (contraste appliqué)")
+            XCTAssertEqual(preset.settings.shapeRoundness, 0.5, accuracy: 1e-9)
+            XCTAssertTrue(preset.settings.grainMoving)
+            XCTAssertEqual(preset.settings.grainContrast, -0.45, accuracy: 1e-9)
+            XCTAssertEqual(preset.settings.speedSize, 0.2, accuracy: 1e-9)
+            XCTAssertTrue(preset.settings.randomizeRotation)
             XCTAssertTrue(preset.ignored.contains { $0.contains("1 autres réglages") }, "réglage non géré signalé : \(preset.ignored)")
             XCTAssertEqual(preset.settings.spacingJitter, 0.24, accuracy: 1e-9)
             XCTAssertEqual(preset.settings.scatter, 0.14, accuracy: 1e-9)
@@ -134,12 +145,22 @@ final class BrushAndTimelapseTests: XCTestCase {
         settings.grain = BrushTextureImport.texture(from: image, name: "disque inversé", invert: true)
         settings.followStroke = true
         settings.grainScaleDegrees = 7
+        settings.taperStartLength = 3
+        settings.stampCount = 5
+        settings.grainMoving = true
+        settings.tiltOpacity = 0.4
+        settings.author = "Paul"
         let data = try NativeBrushFile.data(BrushPreset(name: "Mon pinceau", settings: settings))
         let back = try NativeBrushFile.preset(from: data)
         XCTAssertEqual(back.name, "Mon pinceau")
         XCTAssertEqual(back.settings.radiusDegrees, 5)
         XCTAssertTrue(back.settings.followStroke)
         XCTAssertEqual(back.settings.grainScaleDegrees, 7)
+        XCTAssertEqual(back.settings.taperStartLength, 3)
+        XCTAssertEqual(back.settings.stampCount, 5)
+        XCTAssertTrue(back.settings.grainMoving)
+        XCTAssertEqual(back.settings.tiltOpacity, 0.4)
+        XCTAssertEqual(back.settings.author, "Paul")
         let shape = try XCTUnwrap(back.settings.shape)
         XCTAssertEqual(shape.size, 32)
         for (a, b) in Swift.zip(shape.values, settings.shape!.values) { XCTAssertEqual(a, b, accuracy: 0.5 / 255 + 1e-6) }

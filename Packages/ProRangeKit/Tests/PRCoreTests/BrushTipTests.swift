@@ -104,4 +104,57 @@ final class BrushTipTests: XCTestCase {
         XCTAssertEqual(mirrored.coverage(at: frame.unproject([0.1, 0])), 1, accuracy: 1e-5)
         XCTAssertEqual(settings.spacing(radius: 1, random: 0.5), 0.2, accuracy: 1e-12)
     }
+
+    func testRoundnessMovingGrainAndStrokeContext() {
+        let center = Equirect.direction(latitude: 0.2, longitude: 0.3)
+        let frame = TangentFrame(center: center)
+        let full = BrushTexture(name: "plein", size: 4, values: [Float](repeating: 1, count: 16))
+        // Rondeur 0,5 : la forme est écrasée de moitié dans sa hauteur.
+        let squashed = DabEvaluator(SphericalDab(center: center, radius: 0.2, hardness: 1, color: [1, 1, 1, 1],
+                                                 tip: DabTip(shape: full, roundness: 0.5)), pixelAngle: 0.001)
+        XCTAssertEqual(squashed.coverage(at: frame.unproject([0, 0.09])), 1, accuracy: 1e-5)
+        XCTAssertEqual(squashed.coverage(at: frame.unproject([0, 0.12])), 0, "au-delà de la moitié de la hauteur")
+        XCTAssertEqual(squashed.coverage(at: frame.unproject([0.18, 0])), 1, accuracy: 1e-5, "largeur intacte")
+
+        // Grain mobile : lu dans le repère du dab (même valeur autour de deux centres différents).
+        let noisy = BrushTexture(name: "bruit", size: 8, values: (0..<64).map { Float((-e * 29) % 64) / 63 })
+        let tip = DabTip(grain: noisy, grainScale: 0.1, grainMoving: true, grainOffset: [0.25, 0.5])
+        let a = tip.grainValue(at: center, local: [0.03, -0.02])
+        let b = tip.grainValue(at: Equirect.direction(latitude: -0.8, longitude: 2), local: [0.03, -0.02])
+        XCTAssertEqual(a, b, "le grain suit le tampon")
+
+        // Effilement, vitesse, inclinaison, nombre de tampons.
+        var s = BrushSettings(radiusDegrees: 4, spacing: 0.2, pressureAffectsSize: false)
+        s.taperStartLength = 2
+        s.taperSize = 1
+        let length = 2 * 2 * 4 * Double.pi / 180
+        let start = s.dab(at: center, pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: 0))
+        let half = s.dab(at: center, pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: length / 2))
+        let done = s.dab(at: center, pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: length))
+        XCTAssertLessThan(start.radius, half.radius)
+        XCTAssertEqual(half.radius, done.radius * 0.5, accuracy: 1e-9)
+        s.taperStartLength = 0
+        s.speedSize = 0.5
+        XCTAssertEqual(s.dab(at: center, pressure: 1, color: .one, mode: .paint, context: StrokeContext(speed: 10)).radius,
+                       s.radius(pressure: 1) * 0.5, accuracy: 1e-9, "rapide : moitié de taille")
+        s.speedSize = 0
+        s.tiltOpacity = 1
+        s.tiltAngleDegrees = 0
+        XCTAssertEqual(s.dab(at: center, pressure: 1, color: .one, mode: .paint, context: StrokeContext(tilt: 0.5)).color.w, 0.5,
+                       accuracy: 1e-5, "incliné à 45° : moitié d'opacité")
+        s.stampCount = 4
+        s.stampCountJitter = 0.5
+        XCTAssertEqual(s.stampCount(random: 0), 4)
+        XCTAssertEqual(s.stampCount(random: 1), 2)
+
+        // Grain : contraste, luminosité, inversion appliqués à l'image importée.
+        s.grainSource = BrushTexture(name: "g", size: 2, values: [0.25, 0.75, 0.5, 0.5])
+        s.grainInverted = true
+        s.refreshGrain()
+        XCTAssertEqual(s.grain?.values[0] ?? 0, 0.75, accuracy: 1e-6)
+        s.grainInverted = false
+        s.grainContrast = 1
+        s.refreshGrain()
+        XCTAssertEqual(s.grain?.values[0] ?? 0, 0, accuracy: 1e-6, "contraste doublé")
+    }
 }

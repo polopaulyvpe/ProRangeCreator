@@ -16,7 +16,8 @@ public final class BrushEngine {
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, opacité
         var options: SIMD4<Float>  // espace de fusion (0 perceptuel, 1 linéaire), verrou alpha, inutilisés
         var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
-        var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, inutilisé
+        var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, rondeur
+        var grain2: SIMD4<Float>   // décalage du grain mobile (x, y), cos et sin de sa rotation
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -94,16 +95,21 @@ public final class BrushEngine {
             let lockFlag: Float = alphaLock ? 1 : 0
             let tip = dab.tip
             let rotation = tip?.rotation ?? 0
-            let tipVector = SIMD4<Float>(Float(cos(rotation)), Float(sin(rotation)),
-                                         tip?.shape != nil ? 1 : 0, tip?.grain != nil ? 1 : 0)
-            let grainVector = SIMD4<Float>(Float(1 / (tip?.grainScale ?? 1)), Float(tip?.grainDepth ?? 0), tip?.flipX == true ? 1 : 0, 0)
+            let grainMode: Float = tip?.grain == nil ? 0 : (tip?.grainMoving == true ? 2 : 1)
+            let tipVector = SIMD4<Float>(Float(cos(rotation)), Float(sin(rotation)), tip?.shape != nil ? 1 : 0, grainMode)
+            let grainVector = SIMD4<Float>(Float(1 / (tip?.grainScale ?? 1)), Float(tip?.grainDepth ?? 0),
+                                           tip?.flipX == true ? 1 : 0, Float(max(0.05, tip?.roundness ?? 1)))
+            let grainRotation = tip?.grainRotation ?? 0
+            let offset = tip?.grainOffset ?? .zero
+            let grain2Vector = SIMD4<Float>(Float(offset.x), Float(offset.y), Float(cos(grainRotation)), Float(sin(grainRotation)))
             encoder.setTexture(gpuTexture(tip?.shape), index: 1)
             encoder.setTexture(gpuTexture(tip?.grain), index: 2)
             for columns in span.columns {
                 let region = SIMD4<Int32>(Int32(columns.lowerBound), Int32(span.rows.lowerBound),
                                           Int32(columns.count), Int32(span.rows.count))
                 var gpu = GPUDab(center: center, params: params, color: dab.color,
-                                 options: SIMD4<Float>(spaceFlag, lockFlag, 0, 0), tip: tipVector, grain: grainVector, region: region)
+                                 options: SIMD4<Float>(spaceFlag, lockFlag, 0, 0), tip: tipVector, grain: grainVector,
+                                 grain2: grain2Vector, region: region)
                 encoder.setBytes(&gpu, length: MemoryLayout<GPUDab>.stride, index: 0)
                 let groups = MTLSize(width: (columns.count + group.width - 1) / group.width,
                                      height: (span.rows.count + group.height - 1) / group.height, depth: 1)
@@ -129,6 +135,7 @@ public final class BrushEngine {
         float4 options;
         float4 tip;
         float4 grain;
+        float4 grain2;
         int4 region;
     };
 
@@ -181,24 +188,34 @@ public final class BrushEngine {
         float sinA = length(tangent);
         float distance = atan2(sinA, cosA);
         float a;
-        if (dab.tip.z > 0.5) {
-            // Forme : coordonnées du plan tangent (azimutal équidistant), tournées, ramenées au carré [-1, 1]².
+        // Coordonnées du plan tangent (azimutal équidistant) : pour la forme et pour le grain mobile.
+        float px = 0.0, py = 0.0;
+        if (dab.tip.z > 0.5 || dab.tip.w > 1.5) {
             float3 east = cross(c, float3(0.0, 1.0, 0.0));
             east = length(east) < 1e-6 ? float3(1.0, 0.0, 0.0) : normalize(east);
             float3 north = cross(east, c);
             float k = sinA > 1e-7 ? distance / sinA : 1.0;
-            float px = dot(tangent, east) * k;
-            float py = dot(tangent, north) * k;
+            px = dot(tangent, east) * k;
+            py = dot(tangent, north) * k;
+        }
+        if (dab.tip.z > 0.5) {
+            // Forme : tournée, retournée, écrasée selon la rondeur, ramenée au carré [-1, 1]².
             float qx = (px * dab.tip.x + py * dab.tip.y) / dab.center.w;
             if (dab.grain.z > 0.5) { qx = -qx; }
-            float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w;
+            float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w / max(0.05, dab.grain.w);
             if (abs(qx) > 1.0 || abs(qy) > 1.0) { return; }
             a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5)).r;
         } else {
             a = coverage(distance, dab.center.w, dab.params.x, dab.params.y);
         }
         if (a <= 0.0) { return; }
-        if (dab.tip.w > 0.5) {
+        if (dab.tip.w > 1.5) {
+            // Grain mobile : dans le repère du tampon, tourné et décalé.
+            float gu = (px * dab.grain2.z + py * dab.grain2.w) * dab.grain.x + dab.grain2.x;
+            float gv = (-px * dab.grain2.w + py * dab.grain2.z) * dab.grain.x + dab.grain2.y;
+            float g = grain.sample(repeatSampler, float2(gu, gv)).r;
+            a *= 1.0 - dab.grain.y * (1.0 - g);
+        } else if (dab.tip.w > 0.5) {
             // Grain fixé à la sphère : trois projections planes mélangées (poids |d|^4).
             float3 w = abs(d);
             w = w * w;

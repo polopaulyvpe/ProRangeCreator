@@ -80,7 +80,12 @@ extension CanvasSession {
         do {
             let image = try ImageDecoder.decode(url)
             let texture = BrushTextureImport.texture(from: image, name: url.deletingPathExtension().lastPathComponent, invert: invert)
-            if asGrain { settings.grain = texture } else { settings.shape = texture }
+            if asGrain {
+                settings.grainSource = texture
+                settings.refreshGrain()
+            } else {
+                settings.shape = texture
+            }
         } catch {
             fileMessage = "Image illisible : \(error)"
         }
@@ -133,7 +138,10 @@ struct BrushLibrarySheet: View {
                         Button("Importer une image…") { open(.grain) }
                         if session.settings.grain != nil {
                             Spacer()
-                            Button("Retirer", role: .destructive) { session.settings.grain = nil }
+                            Button("Retirer", role: .destructive) {
+                                session.settings.grain = nil
+                                session.settings.grainSource = nil
+                            }
                         }
                     }
                     if session.settings.grain != nil {

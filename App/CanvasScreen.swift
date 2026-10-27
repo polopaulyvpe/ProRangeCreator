@@ -170,6 +170,9 @@ final class CanvasSession {
     var showImporter = false
     var isDecodingImport = false
     var showBrushLibrary = false
+    var showBrushStudio = false
+    /// Points de réinitialisation des pinceaux (Atelier > À propos), par nom.
+    var brushResetPoints: [String: BrushResetPoint] = [:]
     var showTimelapse = false
     var interfaceHidden = false
     var showPreferences = false
@@ -183,6 +186,13 @@ final class CanvasSession {
     @ObservationIgnored var timelapseCaptureRequested = false
     @ObservationIgnored var previousDabCenter: Vec3?
     @ObservationIgnored var strokeRandom = StrokeRandom(seed: 1)
+    // Contexte du trait en cours (effilement, vitesse, inclinaison, tirages du grain et de la forme).
+    @ObservationIgnored var strokeDistance = 0.0
+    @ObservationIgnored var strokeSpeed = 0.0
+    @ObservationIgnored var strokeTilt = 0.0
+    @ObservationIgnored var lastMoveTime: CFTimeInterval = 0
+    @ObservationIgnored var strokeGrainOffset = SIMD2<Double>.zero
+    @ObservationIgnored var strokeRotationOffset = 0.0
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -268,13 +278,15 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
-    func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0, random: DabRandom = .none) -> SphericalDab {
+    func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0, random: DabRandom = .none,
+             context: StrokeContext = .none) -> SphericalDab {
         let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
         return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase,
-                            strokeAngle: strokeAngle, random: random)
+                            strokeAngle: strokeAngle, random: random, context: context)
     }
 
-    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0) {
+        strokeTilt = tilt
         let pressure = preferences.mappedPressure(pressure)
         lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
@@ -310,6 +322,11 @@ final class CanvasSession {
         if tool == .brush { rememberColor() }
         previousDabCenter = nil
         strokeRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
+        strokeDistance = 0
+        strokeSpeed = 0
+        lastMoveTime = CACurrentMediaTime()
+        strokeGrainOffset = [strokeRandom.next(), strokeRandom.next()]
+        strokeRotationOffset = strokeRandom.next() * 2 * .pi
         let centers = sampler.begin(at: d)
         switch tool {
         case .smudge, .liquify:
@@ -325,7 +342,8 @@ final class CanvasSession {
         }
     }
 
-    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double) {
+    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0) {
+        strokeTilt = tilt
         let pressure = preferences.mappedPressure(pressure)
         lastAspect = aspect
         if tool == .select, transform == nil {
@@ -333,6 +351,13 @@ final class CanvasSession {
             return
         }
         guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        // Vitesse du trait (Dynamique > Vitesse), lissée ; les touches regroupées d'une même image ne comptent pas.
+        let now = CACurrentMediaTime()
+        if let last = lastDirection, now - lastMoveTime > 0.004 {
+            let instant = Sphere.angle(last, d) / (now - lastMoveTime)
+            strokeSpeed = strokeSpeed * 0.7 + instant * 0.3
+            lastMoveTime = now
+        }
         lastDirection = d
         if distort != nil {
             moveDistortCorner(to: d)
@@ -360,13 +385,19 @@ final class CanvasSession {
     func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
         var dabs: [SphericalDab] = []
         for center in centers {
+            if let previous = previousDabCenter { strokeDistance += Sphere.angle(previous, center) }
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousDabCenter ?? center)
-            // Mêmes tirages pour toutes les copies de symétrie : elles restent identiques.
-            let random = settings.hasJitter ? strokeRandom.dab() : .none
-            for (i, image) in images.enumerated() {
-                let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
-                dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle, random: random))
+            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: strokeTilt,
+                                        grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
+            // Plusieurs tampons par dab (Forme > Nombre) ; mêmes tirages pour toutes les copies de symétrie.
+            let count = settings.stampCount(random: strokeRandom.next())
+            for _ in 0..<count {
+                let random = settings.hasJitter ? strokeRandom.dab() : .none
+                for (i, image) in images.enumerated() {
+                    let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
+                    dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle, random: random, context: context))
+                }
             }
             previousDabCenter = center
         }
@@ -540,6 +571,12 @@ final class CanvasMTKView: MTKView {
         [Double(p.x / bounds.width) * 2 - 1, 1 - Double(p.y / bounds.height) * 2]
     }
 
+    /// Inclinaison du Pencil : 0 = vertical, 1 = à plat ; le doigt n'en a pas (0).
+    private func tilt(_ touch: UITouch) -> Double {
+        guard touch.type == .pencil else { return 0 }
+        return min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2)))
+    }
+
     /// Pression normalisée du Pencil ; le doigt n'en a pas (1).
     private func pressure(_ touch: UITouch) -> Double {
         guard touch.type == .pencil, touch.maximumPossibleForce > 0 else { return 1 }
@@ -566,7 +603,7 @@ final class CanvasMTKView: MTKView {
         }
         guard drawingTouch == nil, let touch = touches.first(where: canDraw) else { return }
         drawingTouch = touch
-        session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect, pressure: pressure(touch))
+        session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -577,7 +614,7 @@ final class CanvasMTKView: MTKView {
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
-            session.strokeMoved(ndc: ndc(t.location(in: self)), aspect: aspect, pressure: pressure(t))
+            session.strokeMoved(ndc: ndc(t.location(in: self)), aspect: aspect, pressure: pressure(t), tilt: tilt(t))
         }
     }
 
@@ -853,6 +890,7 @@ struct CanvasScreen: View {
         .sheet(isPresented: $session.showSnapshots) { SnapshotsSheet(session: session) }
         .sheet(isPresented: $session.showTextSheet) { TextSheet(session: session) }
         .sheet(isPresented: $session.showBrushLibrary) { BrushLibrarySheet(session: session) }
+        .fullScreenCover(isPresented: $session.showBrushStudio) { BrushStudioView(session: session) }
         .sheet(isPresented: $session.showRotation) {
             SphereRotationPanel(session: session)
                 .padding(24)

@@ -133,6 +133,11 @@ public enum ProcreateBrushImport {
         "dynamicsJitterSize", "dynamicsJitterOpacity", "shapeScatter", "shapeFlipXJitter", "shapeFlipYJitter",
         "shapeAngle", "shapeRotation", "dynamicsPressureSize", "dynamicsPressureOpacity", "textureScale",
         "grainDepth", "textureDepth", "bundledShapePath", "bundledGrainPath",
+        "pencilTaperStartLength", "taperStartLength", "pencilTaperSize", "taperSize", "pencilTaperOpacity", "taperOpacity",
+        "shapeRoundness", "shapeCount", "shapeCountJitter", "shapeRandomise", "textureMovement", "textureRotation",
+        "grainDepthMinimum", "grainDepthJitter", "textureOffsetJitter", "textureContrast", "textureBrightness", "textureInverted",
+        "dynamicsSpeedSize", "dynamicsSpeedOpacity", "dynamicsTiltOpacity", "dynamicsTiltSize", "dynamicsTiltAngle", "minOpacity",
+        "authorName",
     ]
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
@@ -212,13 +217,70 @@ public enum ProcreateBrushImport {
             if settings.followStroke { mapped.append("forme qui suit le trait") }
         }
         if let pressure = number("dynamicsPressureSize") {
-            settings.pressureAffectsSize = pressure > 0.2
-            mapped.append("pression → taille : \(settings.pressureAffectsSize ? "oui" : "non")")
+            settings.pressureAffectsSize = pressure > 0.01
+            settings.pressureSizeAmount = min(1, max(0, pressure))
+            mapped.append("pression → taille \(pct(pressure))")
         }
         if let pressure = number("dynamicsPressureOpacity") {
-            settings.pressureAffectsOpacity = pressure > 0.2
-            mapped.append("pression → opacité : \(settings.pressureAffectsOpacity ? "oui" : "non")")
+            settings.pressureAffectsOpacity = pressure > 0.01
+            settings.pressureOpacityAmount = min(1, max(0, pressure))
+            mapped.append("pression → opacité \(pct(pressure))")
         }
+        // Effilement : celui du Pencil s'il est réglé, sinon celui du doigt ; longueur 0…1 → 0…10 diamètres.
+        let taperLength = [number("pencilTaperStartLength"), number("taperStartLength")].compactMap { $0 }.first { $0 > 0 } ?? 0
+        if taperLength > 0 {
+            settings.taperStartLength = taperLength * 10
+            settings.taperSize = min(1, max(0, number("pencilTaperSize") ?? number("taperSize") ?? 1))
+            settings.taperOpacity = min(1, max(0, number("pencilTaperOpacity") ?? number("taperOpacity") ?? 0))
+            mapped.append("effilement → \(fmt(settings.taperStartLength)) diamètres")
+        }
+        if let roundness = number("shapeRoundness") {
+            settings.shapeRoundness = min(1, max(0.05, roundness))
+            mapped.append("rondeur → \(pct(settings.shapeRoundness))")
+        }
+        if let count = number("shapeCount"), count > 0 {
+            settings.stampCount = count <= 1 ? 1 + Int((count * 15).rounded()) : min(16, Int(count))
+            mapped.append("nombre de tampons → \(settings.stampCount)")
+        }
+        if let jitter = number("shapeCountJitter"), jitter > 0 { settings.stampCountJitter = min(1, jitter) }
+        if (brush["shapeRandomise"] as? Bool) == true {
+            settings.randomizeRotation = true
+            mapped.append("angle de départ aléatoire")
+        }
+        if let movement = number("textureMovement") {
+            settings.grainMoving = movement > 0.5
+            mapped.append("grain \(settings.grainMoving ? "mobile" : "texturé")")
+        }
+        if let rotation = number("textureRotation"), rotation != 0 {
+            settings.grainRotationDegrees = abs(rotation) <= 1 ? rotation * 180 : rotation
+        }
+        if let minimum = number("grainDepthMinimum") { settings.grainDepthMinimum = min(1, max(0, minimum)) }
+        if let jitter = number("grainDepthJitter") { settings.grainDepthJitter = min(1, max(0, jitter)) }
+        if (brush["textureOffsetJitter"] as? Bool) == true { settings.grainOffsetJitter = true }
+        if let contrast = number("textureContrast") {
+            settings.grainContrast = max(-1, min(1, contrast))
+            mapped.append("contraste du grain → \(pct(contrast))")
+        }
+        if let brightness = number("textureBrightness") {
+            settings.grainBrightness = max(-1, min(1, brightness))
+            mapped.append("luminosité du grain → \(pct(brightness))")
+        }
+        if (brush["textureInverted"] as? Bool) == true { settings.grainInverted = true }
+        if let speed = number("dynamicsSpeedSize"), speed != 0 {
+            settings.speedSize = max(-1, min(1, speed))
+            mapped.append("vitesse → taille \(pct(speed))")
+        }
+        if let speed = number("dynamicsSpeedOpacity"), speed != 0 {
+            settings.speedOpacity = max(-1, min(1, speed))
+            mapped.append("vitesse → opacité \(pct(speed))")
+        }
+        if let tilt = number("dynamicsTiltOpacity"), tilt > 0 {
+            settings.tiltOpacity = min(1, tilt)
+            mapped.append("inclinaison → opacité \(pct(tilt))")
+        }
+        if let tilt = number("dynamicsTiltSize"), tilt > 0 { settings.tiltSize = min(2, tilt) }
+        if let angle = number("dynamicsTiltAngle") { settings.tiltAngleDegrees = min(89, max(0, angle * 90)) }
+        if let minimum = number("minOpacity") { settings.minOpacity = min(1, max(0.02, minimum)) }
         if let scale = number("textureScale") {
             settings.grainScaleDegrees = min(30, max(0.2, 3 * scale))
             mapped.append("échelle du grain → \(fmt(settings.grainScaleDegrees))°")
@@ -233,13 +295,17 @@ public enum ProcreateBrushImport {
             ignored.append("forme « \((path as NSString).lastPathComponent) » interne à Procreate, absente du fichier : substitut granuleux (importe une image pour la remplacer)")
         }
         if let path = string("bundledGrainPath") {
-            settings.grain = BuiltInBrushes.substituteGrain
+            settings.grainSource = BuiltInBrushes.substituteGrain
             ignored.append("grain « \((path as NSString).lastPathComponent) » interne à Procreate, absent du fichier : substitut (importe une image pour le remplacer)")
         }
         let others = brush.keys.filter { !knownKeys.contains($0) && !$0.hasPrefix("$") }.count
         if others > 0 {
             ignored.append("\(others) autres réglages non gérés (mélange humide, dynamique de couleur, inclinaison, effilement, rendu…)")
         }
+        settings.name = name
+        settings.author = string("authorName") ?? ""
+        // Grain dérivé de l'image importée et des réglages de contraste, luminosité, inversion.
+        settings.refreshGrain()
         return BrushPreset(name: name, settings: settings, mapped: mapped, ignored: ignored)
     }
 
@@ -275,7 +341,8 @@ public enum ProcreateBrushImport {
                 preset.mapped.append("Shape.png → forme")
             }
             if let grain = image("grain.png") {
-                preset.settings.grain = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
+                preset.settings.grainSource = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
+                preset.settings.refreshGrain()
                 preset.mapped.append("Grain.png → grain")
             }
             return preset
@@ -301,8 +368,9 @@ public enum ProcreateBrushImport {
     private static func fmt(_ v: Double) -> String { String(format: "%.2f", v) }
     private static func pct(_ v: Double) -> String { "\(Int((v * 100).rounded())) %" }
 }
-
 /// Format natif `.prbrush` : JSON, formes et grains en octets (niveaux de gris 8 bits) encodés en base64.
+/// Les réglages ajoutés après la version 1 sont rangés dans `values` et `flags` (nom → valeur) : un fichier ancien
+/// les laisse à leur valeur par défaut, un réglage futur n'empêche pas de relire le fichier.
 public enum NativeBrushFile {
     struct Texture: Codable {
         var name: String
@@ -326,18 +394,40 @@ public enum NativeBrushFile {
         var grainDepth: Double
         var shape: Texture?
         var grain: Texture?
-        // Variations (ajoutées après la version 1 : absentes des anciens fichiers).
         var spacingJitter: Double?
         var scatter: Double?
         var sizeJitter: Double?
         var opacityJitter: Double?
         var rotationJitter: Double?
         var randomFlip: Bool?
+        var author: String?
+        var grainSource: Texture?
+        var values: [String: Double]?
+        var flags: [String: Bool]?
     }
 
     public enum Failure: Error {
         case unsupportedVersion(Int)
     }
+
+    /// Réglages numériques de l'Atelier, par nom.
+    static var numericKeys: [(String, WritableKeyPath<BrushSettings, Double>)] { [
+        ("taperStartLength", \.taperStartLength), ("taperSize", \.taperSize), ("taperOpacity", \.taperOpacity),
+        ("shapeRoundness", \.shapeRoundness), ("stampCountJitter", \.stampCountJitter),
+        ("grainRotationDegrees", \.grainRotationDegrees), ("grainDepthMinimum", \.grainDepthMinimum),
+        ("grainDepthJitter", \.grainDepthJitter), ("grainContrast", \.grainContrast), ("grainBrightness", \.grainBrightness),
+        ("speedSize", \.speedSize), ("speedOpacity", \.speedOpacity),
+        ("pressureSizeAmount", \.pressureSizeAmount), ("pressureOpacityAmount", \.pressureOpacityAmount),
+        ("tiltOpacity", \.tiltOpacity), ("tiltSize", \.tiltSize), ("tiltAngleDegrees", \.tiltAngleDegrees),
+        ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
+        ("maxOpacity", .maxOpacity), ("minOpacity", .minOpacity),
+    ] }
+
+    /// Réglages oui / non de l'Atelier, par nom.
+    static var flagKeys: [(String, WritableKeyPath<BrushSettings, Bool>)] { [
+        ("randomizeRotation", \.randomizeRotation), ("grainMoving", \.grainMoving),
+        ("grainOffsetJitter", .grainOffsetJitter), ("grainInverted", .grainInverted),
+    ] }
 
     static func encode(_ texture: BrushTexture?) -> Texture? {
         texture.map { t in Texture(name: t.name, size: t.size, values: Data(t.values.map { UInt8(min(1, max(0, $0)) * 255 + 0.5) })) }
@@ -350,13 +440,19 @@ public enum NativeBrushFile {
 
     public static func data(_ preset: BrushPreset) throws -> Data {
         let s = preset.settings
+        var values: [String: Double] = [:]
+        for (key, path) in numericKeys { values[key] = s[keyPath: path] }
+        values["stampCount"] = Double(s.stampCount)
+        var flags: [String: Bool] = [:]
+        for (key, path) in flagKeys { flags[key] = s[keyPath: path] }
         let file = File(name: preset.name, radiusDegrees: s.radiusDegrees, opacity: s.opacity, hardness: s.hardness, spacing: s.spacing,
                         pressureAffectsSize: s.pressureAffectsSize, pressureAffectsOpacity: s.pressureAffectsOpacity,
                         minimumSize: s.minimumSize, shapeRotationDegrees: s.shapeRotationDegrees, followStroke: s.followStroke,
                         grainScaleDegrees: s.grainScaleDegrees, grainDepth: s.grainDepth,
                         shape: encode(s.shape), grain: encode(s.grain),
                         spacingJitter: s.spacingJitter, scatter: s.scatter, sizeJitter: s.sizeJitter,
-                        opacityJitter: s.opacityJitter, rotationJitter: s.rotationJitter, randomFlip: s.randomFlip)
+                        opacityJitter: s.opacityJitter, rotationJitter: s.rotationJitter, randomFlip: s.randomFlip,
+                        author: s.author, grainSource: encode(s.grainSource), values: values, flags: flags)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(file)
@@ -368,18 +464,24 @@ public enum NativeBrushFile {
         var s = BrushSettings(radiusDegrees: file.radiusDegrees, opacity: file.opacity, hardness: file.hardness, spacing: file.spacing,
                               pressureAffectsSize: file.pressureAffectsSize, pressureAffectsOpacity: file.pressureAffectsOpacity,
                               minimumSize: file.minimumSize)
+        s.name = file.name
+        s.author = file.author ?? ""
         s.shapeRotationDegrees = file.shapeRotationDegrees
         s.followStroke = file.followStroke
         s.grainScaleDegrees = file.grainScaleDegrees
         s.grainDepth = file.grainDepth
         s.shape = decode(file.shape)
         s.grain = decode(file.grain)
+        s.grainSource = decode(file.grainSource)
         s.spacingJitter = file.spacingJitter ?? 0
         s.scatter = file.scatter ?? 0
         s.sizeJitter = file.sizeJitter ?? 0
         s.opacityJitter = file.opacityJitter ?? 0
         s.rotationJitter = file.rotationJitter ?? 0
         s.randomFlip = file.randomFlip ?? false
+        for (key, path) in numericKeys { if let v = file.values?[key] { s[keyPath: path] = v } }
+        if let count = file.values?["stampCount"] { s.stampCount = max(1, min(16, Int(count))) }
+        for (key, path) in flagKeys { if let v = file.flags?[key] { s[keyPath: path] = v } }
         return BrushPreset(name: file.name, settings: s)
     }
 }
