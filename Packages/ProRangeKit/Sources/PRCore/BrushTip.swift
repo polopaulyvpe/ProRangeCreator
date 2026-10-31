@@ -8,12 +8,34 @@ public final class BrushTexture: Sendable, Hashable {
     public let size: Int
     /// Lignes de haut en bas.
     public let values: [Float]
+    /// Pyramide de réductions (mipmaps) : niveau 0 = `values`, puis moyenne de blocs 2 × 2 (côté divisé par deux, arrondi
+    /// en dessous) jusqu'à 1 texel. Envoyée telle quelle au GPU : le CPU et le GPU filtrent les mêmes données.
+    /// Sans elle, une image de 500 texels lue sur un tampon de 20 pixels scintille (bords hérissés, grain moucheté).
+    public let levels: [[Float]]
+    public let levelSizes: [Int]
 
     public init(name: String, size: Int, values: [Float]) {
         precondition(size > 0 && values.count == size * size)
         self.name = name
         self.size = size
         self.values = values
+        var levels = [values]
+        var sizes = [size]
+        while sizes.last! > 1 {
+            let n = sizes.last!, m = n / 2
+            let src = levels.last!
+            var dst = [Float](repeating: 0, count: m * m)
+            for y in 0..<m {
+                for x in 0..<m {
+                    let i = 2 * y * n + 2 * x
+                    dst[y * m + x] = (src[i] + src[i + 1] + src[i + n] + src[i + n + 1]) * 0.25
+                }
+            }
+            levels.append(dst)
+            sizes.append(m)
+        }
+        self.levels = levels
+        levelSizes = sizes
     }
 
     public static func == (a: BrushTexture, b: BrushTexture) -> Bool { a === b }
@@ -22,6 +44,22 @@ public final class BrushTexture: Sendable, Hashable {
     /// Bilinéaire, coordonnées normalisées (centre du texel i en (i + 0,5) / taille) ; répétée si `wrap`, bornée sinon.
     /// Même convention que l'échantillonneur Metal.
     public func sample(_ u: Double, _ v: Double, wrap: Bool) -> Float {
+        Self.bilinear(values, size, u, v, wrap)
+    }
+
+    /// Trilinéaire : bilinéaire dans les deux niveaux qui encadrent `lod`, mélangés (comme `level(lod)` en Metal).
+    public func sample(_ u: Double, _ v: Double, wrap: Bool, lod: Float) -> Float {
+        let top = Float(levels.count - 1)
+        let l = min(top, max(0, lod))
+        let l0 = Int(l)
+        let f = l - Float(l0)
+        let a = Self.bilinear(levels[l0], levelSizes[l0], u, v, wrap)
+        guard f > 0, l0 + 1 < levels.count else { return a }
+        let b = Self.bilinear(levels[l0 + 1], levelSizes[l0 + 1], u, v, wrap)
+        return a + (b - a) * f
+    }
+
+    private static func bilinear(_ values: [Float], _ size: Int, _ u: Double, _ v: Double, _ wrap: Bool) -> Float {
         let x = u * Double(size) - 0.5
         let y = v * Double(size) - 0.5
         let x0f = floor(x)
@@ -36,6 +74,11 @@ public final class BrushTexture: Sendable, Hashable {
         let top = values[y0 * size + x0] * (1 - fx) + values[y0 * size + x1] * fx
         let bottom = values[y1 * size + x0] * (1 - fx) + values[y1 * size + x1] * fx
         return top * (1 - fy) + bottom * fy
+    }
+
+    /// Niveau de réduction pour `texelsPerPixel` texels de l'image par pixel de la toile (0 = pleine résolution).
+    public static func lod(texelsPerPixel: Double) -> Float {
+        Float(max(0, log2(max(1, texelsPerPixel))))
     }
 
     /// Ramène une image en niveaux de gris quelconque à un carré de côté ≤ `maxSize` (recadrage central, moyenne de blocs),
@@ -109,23 +152,35 @@ public struct DabTip: Sendable, Equatable {
 
     /// Valeur du grain. Texturé : dans la direction `d`, mélange des trois projections planes, poids |d|⁴ (sans couture).
     /// Mobile : au point `p` du plan tangent du dab (radians), tourné et décalé.
-    public func grainValue(at d: Vec3, local p: SIMD2<Double> = .zero) -> Float {
+    public func grainValue(at d: Vec3, local p: SIMD2<Double> = .zero, lod: Float = 0) -> Float {
         guard let grain else { return 1 }
         let s = 1 / grainScale
         if grainMoving {
             let c = cos(grainRotation), sn = sin(grainRotation)
             let u = (p.x * c + p.y * sn) * s + grainOffset.x
             let v = (-p.x * sn + p.y * c) * s + grainOffset.y
-            return grain.sample(u, v, wrap: true)
+            return grain.sample(u, v, wrap: true, lod: lod)
         }
         var w = simd_abs(d)
         w = w * w
         w = w * w
         w /= w.x + w.y + w.z
-        let gx = grain.sample(d.y * s, d.z * s, wrap: true)
-        let gy = grain.sample(d.x * s, d.z * s, wrap: true)
-        let gz = grain.sample(d.x * s, d.y * s, wrap: true)
+        let gx = grain.sample(d.y * s, d.z * s, wrap: true, lod: lod)
+        let gy = grain.sample(d.x * s, d.z * s, wrap: true, lod: lod)
+        let gz = grain.sample(d.x * s, d.y * s, wrap: true, lod: lod)
         return Float(w.x) * gx + Float(w.y) * gy + Float(w.z) * gz
+    }
+
+    /// Niveaux de réduction pour une toile dont un pixel couvre `pixelAngle` radians (filtrage amélioré) :
+    /// la forme couvre 2 × rayon, un motif de grain `grainScale`.
+    public func shapeLOD(radius: Double, pixelAngle: Double) -> Float {
+        guard let shape else { return 0 }
+        return BrushTexture.lod(texelsPerPixel: Double(shape.size) * pixelAngle / (2 * radius))
+    }
+
+    public func grainLOD(pixelAngle: Double) -> Float {
+        guard let grain else { return 0 }
+        return BrushTexture.lod(texelsPerPixel: Double(grain.size) * pixelAngle / grainScale)
     }
 
     /// Couverture `base` de la forme combinée au grain `g` : le grain, atténué par la profondeur, est fusionné à la forme.
@@ -136,13 +191,13 @@ public struct DabTip: Sendable, Equatable {
     }
 
     /// Couverture de la forme au point `p` du plan tangent (radians), pour un rayon donné ; nil si hors du carré.
-    public func shapeValue(at p: SIMD2<Double>, radius: Double) -> Float? {
+    public func shapeValue(at p: SIMD2<Double>, radius: Double, lod: Float = 0) -> Float? {
         guard let shape else { return nil }
         let c = cos(rotation), s = sin(rotation)
         let rotatedX = (p.x * c + p.y * s) / radius / max(0.05, width)
         let x = flipX ? -rotatedX : rotatedX
         let y = (-p.x * s + p.y * c) / radius / max(0.05, roundness)
         guard abs(x) <= 1, abs(y) <= 1 else { return 0 }
-        return shape.sample((x + 1) / 2, (1 - y) / 2, wrap: false)
+        return shape.sample((x + 1) / 2, (1 - y) / 2, wrap: false, lod: lod)
     }
 }

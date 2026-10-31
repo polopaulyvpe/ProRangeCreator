@@ -23,7 +23,7 @@ public final class BrushEngine {
         var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
         var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, rondeur
         var grain2: SIMD4<Float>   // décalage du grain mobile (x, y), cos et sin de sa rotation
-        var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), largeur de la forme, inutilisés
+        var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), largeur de la forme, niveaux de réduction de la forme et du grain
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -60,6 +60,7 @@ public final class BrushEngine {
             let desc = MTLSamplerDescriptor()
             desc.minFilter = .linear
             desc.magFilter = .linear
+            desc.mipFilter = .linear
             desc.sAddressMode = mode
             desc.tAddressMode = mode
             guard let state = device.makeSamplerState(descriptor: desc) else { throw Failure.noFunction }
@@ -78,14 +79,21 @@ public final class BrushEngine {
         zeroTile = zero
     }
 
+    /// Forme ou grain avec sa pyramide de réductions (`BrushTexture.levels`, calculée sur le CPU : mêmes données des deux
+    /// côtés). Demi-flottants : format filtrable sur tous les GPU Apple (le filtrage des flottants 32 bits ne l'est pas partout).
     private static func makeTexture(device: any MTLDevice, _ texture: BrushTexture) throws -> any MTLTexture {
-        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: texture.size, height: texture.size, mipmapped: false)
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r16Float, width: texture.size, height: texture.size,
+                                                            mipmapped: texture.levels.count > 1)
+        desc.mipmapLevelCount = texture.levels.count
         desc.usage = .shaderRead
         desc.storageMode = .shared
         guard let gpu = device.makeTexture(descriptor: desc) else { throw Failure.noFunction }
-        texture.values.withUnsafeBytes { raw in
-            gpu.replace(region: MTLRegionMake2D(0, 0, texture.size, texture.size), mipmapLevel: 0,
-                        withBytes: raw.baseAddress!, bytesPerRow: texture.size * 4)
+        for (level, values) in texture.levels.enumerated() {
+            let n = texture.levelSizes[level]
+            let half = values.map { Float16($0) }
+            half.withUnsafeBytes { raw in
+                gpu.replace(region: MTLRegionMake2D(0, 0, n, n), mipmapLevel: level, withBytes: raw.baseAddress!, bytesPerRow: n * 2)
+            }
         }
         return gpu
     }
@@ -139,7 +147,8 @@ public final class BrushEngine {
         let gpu = GPUDab(center: center, params: params, color: dab.color,
                          options: SIMD4<Float>(spaceFlag, lockFlag, dab.secondary ? 1 : 0, dab.flow), tip: tipVector,
                          grain: grainVector, grain2: grain2Vector,
-                         extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), Float(max(0.05, tip?.width ?? 1)), 0, 0),
+                         extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), Float(max(0.05, tip?.width ?? 1)),
+                                             evaluator.shapeLOD, evaluator.grainLOD),
                          region: .zero)
         var regions: [SIMD4<Int32>] = []
         var tiles: [TileCoord] = []
@@ -337,7 +346,7 @@ public final class BrushEngine {
             if (dab.grain.z > 0.5) { qx = -qx; }
             float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w / max(0.05, dab.grain.w);
             if (abs(qx) > 1.0 || abs(qy) > 1.0) { return false; }
-            a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5)).r;
+            a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5), level(dab.extra.z)).r;
         } else {
             a = coverage(distance, dab.center.w, dab.params.x, dab.params.y);
         }
@@ -346,7 +355,7 @@ public final class BrushEngine {
             // Grain mobile : dans le repère du tampon, tourné et décalé.
             float gu = (px * dab.grain2.z + py * dab.grain2.w) * dab.grain.x + dab.grain2.x;
             float gv = (-px * dab.grain2.w + py * dab.grain2.z) * dab.grain.x + dab.grain2.y;
-            float g = grain.sample(repeatSampler, float2(gu, gv)).r;
+            float g = grain.sample(repeatSampler, float2(gu, gv), level(dab.extra.w)).r;
             a = combine(int(dab.extra.x), a, 1.0 - dab.grain.y * (1.0 - g));
         } else if (dab.tip.w > 0.5) {
             // Grain fixé à la sphère : trois projections planes mélangées (poids |d|^4).
@@ -355,9 +364,9 @@ public final class BrushEngine {
             w = w * w;
             w /= (w.x + w.y + w.z);
             float s = dab.grain.x;
-            float g = w.x * grain.sample(repeatSampler, d.yz * s).r
-                    + w.y * grain.sample(repeatSampler, d.xz * s).r
-                    + w.z * grain.sample(repeatSampler, d.xy * s).r;
+            float g = w.x * grain.sample(repeatSampler, d.yz * s, level(dab.extra.w)).r
+                    + w.y * grain.sample(repeatSampler, d.xz * s, level(dab.extra.w)).r
+                    + w.z * grain.sample(repeatSampler, d.xy * s, level(dab.extra.w)).r;
             a = combine(int(dab.extra.x), a, 1.0 - dab.grain.y * (1.0 - g));
         }
         p = uint2(x, y);

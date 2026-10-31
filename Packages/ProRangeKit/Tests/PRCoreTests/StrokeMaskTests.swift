@@ -119,6 +119,22 @@ final class StrokeMaskTests: XCTestCase {
         XCTAssertEqual(jitter.spacing(radius: 1, random: 0.5, speed: 3), 2 * jitter.spacing(radius: 1, random: 0.5), accuracy: 1e-12)
     }
 
+    func testTextureMipmapsFilterSmallDabs() {
+        // Damier 4 × 4 de texels : le niveau 1 moyenne les blocs 2 × 2 (tout gris), le niveau 2 est un seul texel.
+        let checker = BrushTexture(name: "damier", size: 4, values: (0..<16).map { i in (i % 4 + i / 4) % 2 == 0 ? 1 : 0 })
+        XCTAssertEqual(checker.levelSizes, [4, 2, 1])
+        XCTAssertEqual(checker.levels[1], [0.5, 0.5, 0.5, 0.5])
+        XCTAssertEqual(checker.sample(0.125, 0.125, wrap: true, lod: 0), 1)
+        XCTAssertEqual(checker.sample(0.125, 0.125, wrap: true, lod: 1), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(checker.sample(0.125, 0.125, wrap: true, lod: 0.5), 0.75, accuracy: 1e-6, "entre deux niveaux")
+        XCTAssertEqual(checker.sample(0.3, 0.8, wrap: true, lod: 9), 0.5, accuracy: 1e-6, "borné au dernier niveau")
+
+        // Tampon de 2 pixels de rayon pour une forme de 64 texels : réduite de 4 niveaux (64 / 4 = 16 texels par pixel).
+        let tip = DabTip(shape: BrushTexture(name: "f", size: 64, values: [Float](repeating: 1, count: 4096)))
+        XCTAssertEqual(tip.shapeLOD(radius: 2, pixelAngle: 1), 4, accuracy: 1e-6)
+        XCTAssertEqual(tip.shapeLOD(radius: 100, pixelAngle: 1), 0, "agrandie : pleine résolution")
+    }
+
     func testFlowAndCurvesInBrushSettings() {
         var brush = BrushSettings.defaultBrush
         brush.flow = 0.5

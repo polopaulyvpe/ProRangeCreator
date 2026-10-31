@@ -132,12 +132,15 @@ struct FlatBrushPainter {
         let y0 = max(0, Int(center.y - reach)), y1 = min(height - 1, Int(center.y + reach))
         guard x0 <= x1, y0 <= y1 else { return }
         let pixelAngle = 1 / pixelsPerRadian
+        // Filtrage amélioré : même niveau de réduction des textures que sur la toile, à cette échelle.
+        let shapeLOD = tip?.shapeLOD(radius: dab.radius, pixelAngle: pixelAngle) ?? 0
+        let grainLOD = tip?.grainLOD(pixelAngle: pixelAngle) ?? 0
         for py in y0...y1 {
             for px in x0...x1 {
                 // Point du plan tangent, en radians (nord vers le haut de l'image).
                 let p = SIMD2<Double>((Double(px) + 0.5 - center.x) * pixelAngle, -(Double(py) + 0.5 - center.y) * pixelAngle)
                 var a: Float
-                if let tip, let value = tip.shapeValue(at: p, radius: dab.radius) {
+                if let tip, let value = tip.shapeValue(at: p, radius: dab.radius, lod: shapeLOD) {
                     a = value
                 } else {
                     a = Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
@@ -147,11 +150,11 @@ struct FlatBrushPainter {
                 if let tip, let grain = tip.grain {
                     let g: Float
                     if tip.grainMoving {
-                        g = tip.grainValue(at: Self.origin, local: p)
+                        g = tip.grainValue(at: Self.origin, local: p, lod: grainLOD)
                     } else {
                         // Texturé : fixé à l'image, comme il l'est à la sphère.
                         let s = 1 / (tip.grainScale * pixelsPerRadian)
-                        g = grain.sample(Double(px) * s, Double(py) * s, wrap: true)
+                        g = grain.sample(Double(px) * s, Double(py) * s, wrap: true, lod: grainLOD)
                     }
                     a = tip.applyGrain(a, g)
                 }

@@ -50,6 +50,9 @@ public struct DabEvaluator: Sendable {
     /// Rayon au-delà duquel la couverture est nulle (rayon + un texel de marge).
     public let reach: Double
     private let cosReach: Double
+    /// Niveaux de réduction de la forme et du grain pour cette toile (voir `DabTip.shapeLOD`).
+    public let shapeLOD: Float
+    public let grainLOD: Float
 
     public init(_ dab: SphericalDab, pixelAngle: Double) {
         self.dab = dab
@@ -59,6 +62,8 @@ public struct DabEvaluator: Sendable {
         let extent = dab.tip?.shape != nil ? dab.radius * 2.0.squareRoot() : dab.radius
         self.reach = extent + pixelAngle
         self.cosReach = cos(reach)
+        shapeLOD = dab.tip?.shapeLOD(radius: dab.radius, pixelAngle: pixelAngle) ?? 0
+        grainLOD = dab.tip?.grainLOD(pixelAngle: pixelAngle) ?? 0
     }
 
     /// Zone de texels à parcourir sur une toile de cette géométrie.
@@ -74,10 +79,10 @@ public struct DabEvaluator: Sendable {
             return Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
                                                       hardness: dab.hardness, pixelSize: pixelAngle))
         }
-        let base = tip.shapeValue(at: p, radius: dab.radius)
+        let base = tip.shapeValue(at: p, radius: dab.radius, lod: shapeLOD)
             ?? Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
                                                   hardness: dab.hardness, pixelSize: pixelAngle))
         guard base > 0, tip.grain != nil else { return base }
-        return tip.applyGrain(base, tip.grainValue(at: d, local: p))
+        return tip.applyGrain(base, tip.grainValue(at: d, local: p, lod: grainLOD))
     }
 }
