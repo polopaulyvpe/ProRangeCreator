@@ -59,6 +59,12 @@ public final class StackCanvas {
     private var compositeDirty = Set<TileCoord>()
     private var stroking = false
     private var strokeLayer: TiledLayer?
+    /// Trait à masque (glacis, flux, pinceau double) ; nil = chaque dab est posé directement.
+    private var strokeStyle: StrokeStyle?
+    private var strokeBuffer: StrokeBuffer?
+    /// Masque du trait et copie du calque actif d'avant le trait (chemin rapide), créés au premier trait.
+    private var strokeMaskTexture: (any MTLTexture)?
+    private var strokeOriginalTexture: (any MTLTexture)?
     private var lastCommands: (any MTLCommandBuffer)?
 
     public init(stack: LayerStack, device: (any MTLDevice)?, maxDisplayWidth: Int = 8192) {
@@ -115,14 +121,22 @@ public final class StackCanvas {
         return paintingMask ? item.mask : item.layer
     }
 
-    public func beginStroke() {
+    /// Commence un trait. Avec `style`, les dabs s'accumulent dans le masque du trait (voir `StrokeMask`) ;
+    /// sans, chacun est posé directement sur le calque.
+    public func beginStroke(style: StrokeStyle? = nil) {
         cancelStroke()
         if needsRefresh { refresh() }
         guard let target = paintTarget else { return }
         stroking = true
         strokeLayer = target
         strokeTiles = []
+        strokeStyle = style
+        strokeBuffer = style == nil ? nil : StrokeBuffer()
         if !usesFastPath { target.beginOperation() }
+        if usesFastPath, style != nil, let brush, let active, strokeMaskTexture == nil {
+            strokeMaskTexture = brush.makeStrokeTexture(width: active.texture.width, height: active.texture.height)
+            strokeOriginalTexture = brush.makeStrokeTexture(width: active.texture.width, height: active.texture.height)
+        }
     }
 
     public func add(_ dabs: [SphericalDab]) {
@@ -132,7 +146,14 @@ public final class StackCanvas {
         } else {
             let lock = !paintingMask && stack.item(activeID)?.alphaLock == true
             let limit: ((TileCoord) -> [Float]?)? = selection.map { mask in { mask.tileValues($0) } }
-            for dab in dabs { compositeDirty.formUnion(target.stamp(dab, space: blendSpace, alphaLock: lock, selection: limit)) }
+            for dab in dabs {
+                if let style = strokeStyle, let buffer = strokeBuffer {
+                    compositeDirty.formUnion(target.stamp(dab, into: buffer, style: style, space: blendSpace, alphaLock: lock,
+                                                          selection: limit))
+                } else {
+                    compositeDirty.formUnion(target.stamp(dab, space: blendSpace, alphaLock: lock, selection: limit))
+                }
+            }
         }
     }
 
@@ -224,6 +245,8 @@ public final class StackCanvas {
         guard stroking, let target = strokeLayer else { return nil }
         stroking = false
         strokeLayer = nil
+        strokeBuffer = nil
+        defer { strokeStyle = nil }
         guard usesFastPath, let active, let queue else { return (target.id, target.endOperation()) }
 
         if let commands = queue.makeCommandBuffer() {
@@ -243,6 +266,8 @@ public final class StackCanvas {
         guard stroking, let target = strokeLayer else { return }
         stroking = false
         strokeLayer = nil
+        strokeBuffer = nil
+        strokeStyle = nil
         if usesFastPath {
             pending = []
             waitForGPU()
@@ -422,7 +447,12 @@ public final class StackCanvas {
     private func flushPending(into commands: any MTLCommandBuffer) {
         guard let brush, let active, !pending.isEmpty else { return }
         let lock = stack.item(activeID)?.alphaLock == true
-        strokeTiles.formUnion(brush.encode(pending, space: blendSpace, alphaLock: lock, into: active.texture, commandBuffer: commands))
+        if let style = strokeStyle, let mask = strokeMaskTexture, let original = strokeOriginalTexture {
+            strokeTiles.formUnion(brush.encodeStroke(pending, style: style, space: blendSpace, alphaLock: lock, layer: active.texture,
+                                                     original: original, mask: mask, known: strokeTiles, commandBuffer: commands))
+        } else {
+            strokeTiles.formUnion(brush.encode(pending, space: blendSpace, alphaLock: lock, into: active.texture, commandBuffer: commands))
+        }
         pending = []
         active.markChanged()
     }

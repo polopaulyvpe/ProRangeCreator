@@ -80,6 +80,38 @@ public struct BrushSettings: Equatable, Sendable {
     public var grainBrightness: Double = 0
     public var grainInverted = false
 
+    // MARK: Rendu (voir `BrushRendering` et `StrokeMask`)
+    public var rendering: BrushRendering = .lightGlaze
+    /// Flux, dans [0, 1] : part de l'opacité ajoutée au trait à chaque tampon (1 = d'un coup, moins = monte progressivement).
+    public var flow: Double = 1
+
+    // MARK: Pinceau double
+    /// Pinceau secondaire (0 ou 1 élément ; un tableau pour que la structure puisse se contenir elle-même).
+    public var secondaryBrushes: [BrushSettings] = []
+    /// Combinaison des couvertures du principal et du secondaire.
+    public var dualBlendMode: DualBlendMode = .multiply
+    /// Taille du secondaire par rapport au principal : elle le suit quand on change la taille.
+    public var secondaryScale: Double = 1
+
+    public var secondary: BrushSettings? {
+        get { secondaryBrushes.first }
+        set { secondaryBrushes = newValue.map { [$0] } ?? [] }
+    }
+
+    /// Pinceau secondaire prêt à peindre (taille suivant celle du principal), nil pour un pinceau simple.
+    public var resolvedSecondary: BrushSettings? {
+        guard var s = secondary else { return nil }
+        s.radiusDegrees = radiusDegrees * secondaryScale
+        s.secondaryBrushes = []
+        return s
+    }
+
+    /// Façon de poser le trait de ce pinceau.
+    public func strokeStyle(color: SIMD3<Float>, mode: DabMode) -> StrokeStyle {
+        StrokeStyle(color: color, mode: mode, capsPrimary: rendering.capsOpacity,
+                    capsSecondary: secondary?.rendering.capsOpacity ?? true, dual: secondary == nil ? nil : dualBlendMode)
+    }
+
     // MARK: Dynamique
     /// Taille et opacité réduites (ou augmentées si négatif) quand le trait va vite.
     public var speedSize: Double = 0
@@ -97,6 +129,13 @@ public struct BrushSettings: Equatable, Sendable {
     /// Intensité de ces effets, dans [0, 1].
     public var pressureSizeAmount: Double = 1
     public var pressureOpacityAmount: Double = 1
+    /// La pression fait varier le flux, de cette intensité (0 = non).
+    public var pressureFlowAmount: Double = 0
+    /// Courbe de pression du pinceau (appliquée d'abord), puis courbes propres à la taille, à l'opacité et au flux.
+    public var pressureCurve = PressureCurve.linear
+    public var sizePressureCurve = PressureCurve.linear
+    public var opacityPressureCurve = PressureCurve.linear
+    public var flowPressureCurve = PressureCurve.linear
     /// Taille à pression nulle, en fraction du rayon maximal.
     public var minimumSize: Double
     /// Inclinaison du Pencil au-delà de `tiltAngleDegrees` (depuis la verticale) : opacité réduite, taille augmentée.
@@ -139,17 +178,32 @@ public struct BrushSettings: Equatable, Sendable {
         opacity * pressureOpacityScale(pressure)
     }
 
+    /// Pression après la courbe du pinceau.
+    func curvedPressure(_ pressure: Double) -> Double {
+        pressureCurve.value(min(1, max(0, pressure)))
+    }
+
     func pressureSizeScale(_ pressure: Double) -> Double {
         guard pressureAffectsSize else { return 1 }
-        let p = min(1, max(0, pressure))
+        let p = sizePressureCurve.value(curvedPressure(pressure))
         let full = minimumSize + (1 - minimumSize) * p
         return 1 - min(1, max(0, pressureSizeAmount)) * (1 - full)
     }
 
     func pressureOpacityScale(_ pressure: Double) -> Double {
         guard pressureAffectsOpacity else { return 1 }
-        let p = min(1, max(0, pressure))
+        let p = opacityPressureCurve.value(curvedPressure(pressure))
         return 1 - min(1, max(0, pressureOpacityAmount)) * (1 - p)
+    }
+
+    /// Flux d'un tampon pour cette pression (rendu et pression compris).
+    public func flow(pressure: Double) -> Double {
+        var f = rendering.flow(min(1, max(0, self.flow)))
+        if pressureFlowAmount > 0, !rendering.uniformFlow {
+            let p = flowPressureCurve.value(curvedPressure(pressure))
+            f *= 1 - min(1, pressureFlowAmount) * (1 - p)
+        }
+        return f
     }
 
     /// Nombre de tampons de ce dab, avec sa variation.
@@ -198,7 +252,7 @@ public struct BrushSettings: Equatable, Sendable {
             if randomizeRotation { rotation += context.rotationOffset }
             var depth = min(1, max(0, grainDepth))
             if grainDepthMinimum > 0 {
-                let p = min(1, max(0, pressure))
+                let p = curvedPressure(pressure)
                 depth = grainDepthMinimum + (depth - grainDepthMinimum) * p
             }
             depth *= 1 - min(1, max(0, grainDepthJitter)) * random.depth
@@ -208,8 +262,10 @@ public struct BrushSettings: Equatable, Sendable {
                          grainMoving: grainMoving, grainRotation: grainRotationDegrees * .pi / 180,
                          grainOffset: grainOffsetJitter ? context.grainOffset : .zero)
         }
-        return SphericalDab(center: position, radius: size, hardness: hardness,
-                            color: SIMD4<Float>(color.x, color.y, color.z, Float(alpha)), mode: mode, tip: tip)
+        var dab = SphericalDab(center: position, radius: size, hardness: hardness,
+                               color: SIMD4<Float>(color.x, color.y, color.z, Float(alpha)), mode: mode, tip: tip)
+        dab.flow = Float(flow(pressure: pressure))
+        return dab
     }
 
     /// Espacement du prochain dab, avec sa variation.

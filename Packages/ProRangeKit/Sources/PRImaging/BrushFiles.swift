@@ -138,6 +138,9 @@ public enum ProcreateBrushImport {
         "grainDepthMinimum", "grainDepthJitter", "textureOffsetJitter", "textureContrast", "textureBrightness", "textureInverted",
         "dynamicsSpeedSize", "dynamicsSpeedOpacity", "dynamicsTiltOpacity", "dynamicsTiltSize", "dynamicsTiltAngle", "minOpacity",
         "authorName", "plotSmoothing", "plotMovingAverageStabilization", "plotFFTSmoothingAmount", "dynamicsPressureSmoothing",
+        "dynamicsPressureOpacityTransfer", "dynamicsGlazedFlow", "renderingMaxTransfer", "renderingModulatedTransfer",
+        "renderingRecursiveMixing", "dualBlendMode", "dualBlendModeExtended", "dynamicsPressureOverall", "dynamicsPressureSizeCurve",
+        "dynamicsPressureOpacityCurve", "dynamicsPressureTransferModulationCurve",
     ]
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
@@ -221,11 +224,47 @@ public enum ProcreateBrushImport {
             settings.pressureSizeAmount = min(1, max(0, pressure))
             mapped.append("pression → taille \(pct(pressure))")
         }
-        if let pressure = number("dynamicsPressureOpacity") {
+        // Atelier Procreate > Apple Pencil > Pression : « Opacité » est `…OpacityTransfer`, « Flux » est `…PressureOpacity`.
+        if let pressure = number("dynamicsPressureOpacityTransfer") {
             settings.pressureAffectsOpacity = pressure > 0.01
             settings.pressureOpacityAmount = min(1, max(0, pressure))
             mapped.append("pression → opacité \(pct(pressure))")
         }
+        if let pressure = number("dynamicsPressureOpacity"), pressure > 0 {
+            settings.pressureFlowAmount = min(1, pressure)
+            mapped.append("pression → flux \(pct(pressure))")
+        }
+        if let flow = number("dynamicsGlazedFlow") {
+            settings.flow = min(1, max(0, flow))
+            mapped.append("flux → \(pct(settings.flow))")
+        }
+        settings.rendering = (brush["renderingMaxTransfer"] as? Bool) == true ? .intenseGlaze : .lightGlaze
+        mapped.append("rendu → \(settings.rendering.label.lowercased())")
+        // Courbes de pression : points « {x, y} » d'un ValkyrieMagnitudinalCurve.
+        func curve(_ key: String) -> PressureCurve? {
+            guard let reference = brush[key], let index = uidIndex(reference), index < objects.count,
+                  let object = objects[index] as? [String: Any], let pointsRef = object["points"],
+                  let pointsIndex = uidIndex(pointsRef), pointsIndex < objects.count,
+                  let array = objects[pointsIndex] as? [String: Any], let items = array["NS.objects"] as? [Any] else { return nil }
+            let points = items.compactMap { item -> SIMD2<Double>? in
+                var text = item as? String
+                if text == nil, let i = uidIndex(item), i < objects.count { text = objects[i] as? String }
+                guard let text else { return nil }
+                let numbers = text.split { "{}, ".contains($0) }.compactMap { Double($0) }
+                return numbers.count == 2 ? SIMD2(numbers[0], numbers[1]) : nil
+            }
+            return points.count >= 2 ? PressureCurve(points: points) : nil
+        }
+        for (key, path, label) in [("dynamicsPressureOverall", \BrushSettings.pressureCurve, "courbe de pression"),
+                                   ("dynamicsPressureSizeCurve", \BrushSettings.sizePressureCurve, "courbe taille"),
+                                   ("dynamicsPressureTransferModulationCurve", \BrushSettings.opacityPressureCurve, "courbe opacité"),
+                                   ("dynamicsPressureOpacityCurve", \BrushSettings.flowPressureCurve, "courbe flux")] {
+            if let c = curve(key), !c.isLinear {
+                settings[keyPath: path] = c
+                mapped.append("\(label) (\(c.points.count) points)")
+            }
+        }
+        if let mode = number("dualBlendMode") { settings.dualBlendMode = DualBlendMode(procreateCode: Int(mode)) }
         // Effilement : celui du Pencil s'il est réglé, sinon celui du doigt ; longueur 0…1 → 0…10 diamètres.
         let taperLength = [number("pencilTaperStartLength"), number("taperStartLength")].compactMap { $0 }.first { $0 > 0 } ?? 0
         if taperLength > 0 {
@@ -339,31 +378,55 @@ public enum ProcreateBrushImport {
             return components.last == "brush.archive" && !components.contains("reset") && !components.contains("__macosx")
                 && !isSecondary(components)
         }
-        let hasSecondary = zip.entries.contains { isSecondary($0.name.split(separator: "/").map { $0.lowercased() }) }
         guard !archives.isEmpty else { throw Failure.noBrush }
         return try archives.map { archive in
             let folder = (archive.name as NSString).deletingLastPathComponent
-            func image(_ base: String) -> ImportedImage? {
-                guard let entry = zip.entries.first(where: { e in
-                    (e.name as NSString).deletingLastPathComponent == folder
-                        && (e.name as NSString).lastPathComponent.lowercased() == base
-                }), let bytes = try? zip.data(entry) else { return nil }
-                return try? ImageDecoder.decode(data: Data(bytes))
-            }
-            let plist = try zip.data(archive)
-            var preset = parseArchive(Data(plist), fallbackName: archives.count == 1 ? fallbackName : folder)
-            if hasSecondary { preset.ignored.append("pinceau double : seul le pinceau principal est importé") }
-            if let shape = image("shape.png") {
-                preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme")
-                preset.mapped.append("Shape.png → forme")
-            }
-            if let grain = image("grain.png") {
-                preset.settings.grainSource = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
-                preset.settings.refreshGrain()
-                preset.mapped.append("Grain.png → grain")
+            var preset = try readBrush(zip, archive: archive, folder: folder,
+                                       fallbackName: archives.count == 1 ? fallbackName : folder)
+            // Pinceau double : le secondaire est dans le sous-dossier « Sub01 » du principal.
+            if let sub = zip.entries.first(where: { e in
+                let parent = (e.name as NSString).deletingLastPathComponent
+                return (e.name as NSString).lastPathComponent.lowercased() == "brush.archive"
+                    && (parent as NSString).deletingLastPathComponent.lowercased() == folder.lowercased()
+                    && isSecondary(e.name.split(separator: "/").map { $0.lowercased() })
+                    && !e.name.lowercased().split(separator: "/").contains("reset")
+            }) {
+                let second = try readBrush(zip, archive: sub, folder: (sub.name as NSString).deletingLastPathComponent,
+                                           fallbackName: preset.name)
+                var secondary = second.settings
+                secondary.secondaryBrushes = []
+                preset.settings.secondaryScale = secondary.radiusDegrees / max(1e-6, preset.settings.radiusDegrees)
+                preset.settings.secondary = secondary
+                preset.mapped.append("pinceau double : secondaire importé (× \(fmt(preset.settings.secondaryScale)) en taille), "
+                                     + "combinaison \(preset.settings.dualBlendMode.label.lowercased())")
+                preset.mapped += second.mapped.map { "secondaire : \($0)" }
+                preset.ignored += second.ignored.map { "secondaire : \($0)" }
             }
             return preset
         }
+    }
+
+    /// Un pinceau (principal ou secondaire) : son archive et ses images Shape.png, Grain.png à côté.
+    private static func readBrush(_ zip: ZipArchive, archive: ZipArchive.Entry, folder: String, fallbackName: String) throws -> BrushPreset {
+        func image(_ base: String) -> ImportedImage? {
+            guard let entry = zip.entries.first(where: { e in
+                (e.name as NSString).deletingLastPathComponent == folder
+                    && (e.name as NSString).lastPathComponent.lowercased() == base
+            }), let bytes = try? zip.data(entry) else { return nil }
+            return try? ImageDecoder.decode(data: Data(bytes))
+        }
+        let plist = try zip.data(archive)
+        var preset = parseArchive(Data(plist), fallbackName: fallbackName)
+        if let shape = image("shape.png") {
+            preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme")
+            preset.mapped.append("Shape.png → forme")
+        }
+        if let grain = image("grain.png") {
+            preset.settings.grainSource = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")
+            preset.settings.refreshGrain()
+            preset.mapped.append("Grain.png → grain")
+        }
+        return preset
     }
 
     /// Pinceau secondaire d'un pinceau double (dossier « Sub01 »…), que le moteur ne sait pas combiner.
@@ -421,6 +484,11 @@ public enum NativeBrushFile {
         var grainSource: Texture?
         var values: [String: Double]?
         var flags: [String: Bool]?
+        var rendering: String?
+        var curves: [String: PressureCurve]?
+        /// Pinceau secondaire d'un pinceau double (0 ou 1 élément).
+        var secondary: [File]?
+        var dualBlendMode: String?
     }
 
     public enum Failure: Error {
@@ -440,6 +508,12 @@ public enum NativeBrushFile {
         ("tiltOpacity", \.tiltOpacity), ("tiltSize", \.tiltSize), ("tiltAngleDegrees", \.tiltAngleDegrees),
         ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
         ("maxOpacity", \.maxOpacity), ("minOpacity", \.minOpacity),
+        ("flow", \.flow), ("pressureFlowAmount", \.pressureFlowAmount), ("secondaryScale", \.secondaryScale),
+    ] }
+
+    /// Courbes de pression, par nom (seules les courbes non linéaires sont écrites).
+    static var curveKeys: [(String, WritableKeyPath<BrushSettings, PressureCurve>)] { [
+        ("pressure", \.pressureCurve), ("size", \.sizePressureCurve), ("opacity", \.opacityPressureCurve), ("flow", \.flowPressureCurve),
     ] }
 
     /// Réglages oui / non de l'Atelier, par nom.
@@ -457,14 +531,15 @@ public enum NativeBrushFile {
         return BrushTexture(name: texture.name, size: texture.size, values: texture.values.map { Float($0) / 255 })
     }
 
-    public static func data(_ preset: BrushPreset) throws -> Data {
-        let s = preset.settings
+    static func file(_ s: BrushSettings, name: String) -> File {
         var values: [String: Double] = [:]
         for (key, path) in numericKeys { values[key] = s[keyPath: path] }
         values["stampCount"] = Double(s.stampCount)
         var flags: [String: Bool] = [:]
         for (key, path) in flagKeys { flags[key] = s[keyPath: path] }
-        let file = File(name: preset.name, radiusDegrees: s.radiusDegrees, opacity: s.opacity, hardness: s.hardness, spacing: s.spacing,
+        var curves: [String: PressureCurve] = [:]
+        for (key, path) in curveKeys where !s[keyPath: path].isLinear { curves[key] = s[keyPath: path] }
+        var file = File(name: name, radiusDegrees: s.radiusDegrees, opacity: s.opacity, hardness: s.hardness, spacing: s.spacing,
                         pressureAffectsSize: s.pressureAffectsSize, pressureAffectsOpacity: s.pressureAffectsOpacity,
                         minimumSize: s.minimumSize, shapeRotationDegrees: s.shapeRotationDegrees, followStroke: s.followStroke,
                         grainScaleDegrees: s.grainScaleDegrees, grainDepth: s.grainDepth,
@@ -472,14 +547,16 @@ public enum NativeBrushFile {
                         spacingJitter: s.spacingJitter, scatter: s.scatter, sizeJitter: s.sizeJitter,
                         opacityJitter: s.opacityJitter, rotationJitter: s.rotationJitter, randomFlip: s.randomFlip,
                         author: s.author, grainSource: encode(s.grainSource), values: values, flags: flags)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(file)
+        file.rendering = s.rendering.rawValue
+        file.curves = curves.isEmpty ? nil : curves
+        if let secondary = s.secondary {
+            file.secondary = [Self.file(secondary, name: secondary.name)]
+            file.dualBlendMode = s.dualBlendMode.rawValue
+        }
+        return file
     }
 
-    public static func preset(from data: Data) throws -> BrushPreset {
-        let file = try JSONDecoder().decode(File.self, from: data)
-        guard file.version == 1 else { throw Failure.unsupportedVersion(file.version) }
+    static func settings(_ file: File) -> BrushSettings {
         var s = BrushSettings(radiusDegrees: file.radiusDegrees, opacity: file.opacity, hardness: file.hardness, spacing: file.spacing,
                               pressureAffectsSize: file.pressureAffectsSize, pressureAffectsOpacity: file.pressureAffectsOpacity,
                               minimumSize: file.minimumSize)
@@ -501,6 +578,24 @@ public enum NativeBrushFile {
         for (key, path) in numericKeys { if let v = file.values?[key] { s[keyPath: path] = v } }
         if let count = file.values?["stampCount"] { s.stampCount = max(1, min(16, Int(count))) }
         for (key, path) in flagKeys { if let v = file.flags?[key] { s[keyPath: path] = v } }
-        return BrushPreset(name: file.name, settings: s)
+        for (key, path) in curveKeys { if let c = file.curves?[key] { s[keyPath: path] = c } }
+        if let raw = file.rendering, let rendering = BrushRendering(rawValue: raw) { s.rendering = rendering }
+        if let secondary = file.secondary?.first {
+            s.secondary = settings(secondary)
+            if let raw = file.dualBlendMode, let mode = DualBlendMode(rawValue: raw) { s.dualBlendMode = mode }
+        }
+        return s
+    }
+
+    public static func data(_ preset: BrushPreset) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(file(preset.settings, name: preset.name))
+    }
+
+    public static func preset(from data: Data) throws -> BrushPreset {
+        let file = try JSONDecoder().decode(File.self, from: data)
+        guard file.version == 1 else { throw Failure.unsupportedVersion(file.version) }
+        return BrushPreset(name: file.name, settings: settings(file))
     }
 }

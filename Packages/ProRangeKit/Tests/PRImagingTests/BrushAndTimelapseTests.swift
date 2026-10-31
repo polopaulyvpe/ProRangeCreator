@@ -35,7 +35,68 @@ final class FakeBrush: NSObject, NSCoding {
     }
 }
 
+/// Courbe de pression archivée comme `ValkyrieMagnitudinalCurve` : un tableau de points « {x, y} ».
+@objc(PRFakeCurve)
+final class FakeCurve: NSObject, NSCoding {
+    let points: [String]
+    init(_ points: [String]) { self.points = points }
+    required init?(coder: NSCoder) { nil }
+    func encode(with coder: NSCoder) { coder.encode(points as NSArray, forKey: "points") }
+}
+
+/// Faux pinceau double : principal (avec courbe, flux, combinaison) ou secondaire.
+@objc(PRFakeDualBrush)
+final class FakeDualBrush: NSObject, NSCoding {
+    let secondary: Bool
+    init(secondary: Bool) { self.secondary = secondary }
+    required init?(coder: NSCoder) { nil }
+
+    func encode(with coder: NSCoder) {
+        coder.encode("Double", forKey: "name")
+        coder.encode(secondary ? 0.8 : 0.4, forKey: "maxSize")
+        coder.encode(0.1, forKey: "plotSpacing")
+        coder.encode(1.0, forKey: "dynamicsPressureSize")
+        guard !secondary else { return }
+        coder.encode(20.0, forKey: "dualBlendMode")
+        coder.encode(0.25, forKey: "dynamicsPressureOpacityTransfer")
+        coder.encode(0.1, forKey: "dynamicsPressureOpacity")
+        coder.encode(0.7, forKey: "dynamicsGlazedFlow")
+        coder.encode(FakeCurve(["{0.000000, 0.000000}", "{1.000000, 1.000000}", "{0.400000, 0.600000}"]),
+                     forKey: "dynamicsPressureOverall")
+    }
+}
+
 final class BrushAndTimelapseTests: XCTestCase {
+    func testDualBrushCurvesAndFlowImport() throws {
+        let primary = try NSKeyedArchiver.archivedData(withRootObject: FakeDualBrush(secondary: false), requiringSecureCoding: false)
+        let secondary = try NSKeyedArchiver.archivedData(withRootObject: FakeDualBrush(secondary: true), requiringSecureCoding: false)
+        let data = zip([("Brush.archive", [UInt8](primary)), ("Sub01/Brush.archive", [UInt8](secondary)),
+                        ("Reset/Brush.archive", [UInt8](primary)), ("Reset/Sub01/Brush.archive", [UInt8](secondary))], deflate: true)
+        let presets = try ProcreateBrushImport.read(data: data, fallbackName: "double")
+        XCTAssertEqual(presets.count, 1, "le secondaire n'est pas un pinceau à part")
+        let s = try XCTUnwrap(presets.first).settings
+        let second = try XCTUnwrap(s.secondary, "secondaire importé")
+        XCTAssertEqual(s.dualBlendMode, .hardMix)
+        XCTAssertEqual(s.secondaryScale, second.radiusDegrees / s.radiusDegrees, accuracy: 1e-9)
+        XCTAssertGreaterThan(s.secondaryScale, 1.5)
+        XCTAssertEqual(s.pressureOpacityAmount, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(s.pressureFlowAmount, 0.1, accuracy: 1e-9)
+        XCTAssertEqual(s.flow, 0.7, accuracy: 1e-9)
+        XCTAssertEqual(s.pressureCurve.points.count, 3)
+        XCTAssertEqual(s.pressureCurve.value(0.4), 0.6, accuracy: 1e-9)
+
+        // Le .prbrush garde tout : secondaire, combinaison, courbe, flux, rendu.
+        var edited = s
+        edited.rendering = .intenseGlaze
+        let back = try NativeBrushFile.preset(from: NativeBrushFile.data(BrushPreset(name: "Double", settings: edited))).settings
+        XCTAssertEqual(back.secondary?.radiusDegrees, second.radiusDegrees)
+        XCTAssertEqual(back.dualBlendMode, .hardMix)
+        XCTAssertEqual(back.pressureCurve, s.pressureCurve)
+        XCTAssertEqual(back.flow, 0.7, accuracy: 1e-9)
+        XCTAssertEqual(back.pressureFlowAmount, 0.1, accuracy: 1e-9)
+        XCTAssertEqual(back.rendering, .intenseGlaze)
+    }
+
     private var directory: URL!
 
     override func setUpWithError() throws {

@@ -203,6 +203,10 @@ final class CanvasSession {
     @ObservationIgnored var quickShapeApplied = false
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
+    /// Pinceau double : le secondaire a son propre espacement, ses propres tirages.
+    @ObservationIgnored private var secondarySampler = SphericalStrokeSampler()
+    @ObservationIgnored private var secondaryRandom = StrokeRandom(seed: 2)
+    @ObservationIgnored var previousSecondaryCenter: Vec3?
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
 
     var settings: BrushSettings {
@@ -280,10 +284,14 @@ final class CanvasSession {
 
     // MARK: - Peinture
 
+    /// Couleur courante en RGB linéaire.
+    var linearColor: SIMD3<Float> {
+        ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
+    }
+
     func dab(at center: Vec3, pressure: Double, strokeAngle: Double = 0, random: DabRandom = .none,
              context: StrokeContext = .none) -> SphericalDab {
-        let linear = ColorTransfer.toLinear(SIMD3<Float>(Float(color.x), Float(color.y), Float(color.z)))
-        return settings.dab(at: center, pressure: pressure, color: linear, mode: tool == .brush ? .paint : .erase,
+        settings.dab(at: center, pressure: pressure, color: linearColor, mode: tool == .brush ? .paint : .erase,
                             strokeAngle: strokeAngle, random: random, context: context)
     }
 
@@ -323,7 +331,9 @@ final class CanvasSession {
             break
         }
         canvas.forceCPU = tool.needsCPU
-        canvas.beginStroke()
+        // Pinceau et gomme : trait à masque (glacis, flux, pinceau double).
+        let masked = tool == .brush || tool == .eraser
+        canvas.beginStroke(style: masked ? settings.strokeStyle(color: linearColor, mode: tool == .brush ? .paint : .erase) : nil)
         if tool == .brush { rememberColor() }
         previousDabCenter = nil
         strokeRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
@@ -332,6 +342,9 @@ final class CanvasSession {
         lastMoveTime = CACurrentMediaTime()
         strokeGrainOffset = [strokeRandom.next(), strokeRandom.next()]
         strokeRotationOffset = strokeRandom.next() * 2 * .pi
+        secondaryRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
+        previousSecondaryCenter = nil
+        let secondaryCenters = secondarySampler.begin(at: d)
         let centers = sampler.begin(at: d)
         switch tool {
         case .smudge, .liquify:
@@ -342,7 +355,7 @@ final class CanvasSession {
             beginClone(at: d)
             applyClone(centers, pressure: pressure)
         default:
-            canvas.add(symmetricDabs(centers, pressure: pressure))
+            canvas.add(symmetricDabs(centers, pressure: pressure) + secondaryDabs(secondaryCenters, pressure: pressure))
             beginQuickShapeWatch(at: d, pressure: pressure)
         }
     }
@@ -381,7 +394,12 @@ final class CanvasSession {
         case .liquify: applyLiquify(centers, pressure: pressure)
         case .clone, .effect: applyClone(centers, pressure: pressure)
         default:
-            canvas.add(symmetricDabs(centers, pressure: pressure))
+            var secondaryCenters: [Vec3] = []
+            if let secondary = settings.resolvedSecondary {
+                let step = secondary.spacing(radius: secondary.radius(pressure: pressure), random: secondaryRandom.next())
+                secondaryCenters = secondarySampler.add(d, spacing: step)
+            }
+            canvas.add(symmetricDabs(centers, pressure: pressure) + secondaryDabs(secondaryCenters, pressure: pressure))
             noteQuickShapePoint(d)
         }
     }
@@ -406,6 +424,32 @@ final class CanvasSession {
                 }
             }
             previousDabCenter = center
+        }
+        return dabs
+    }
+
+    /// Dabs du pinceau secondaire d'un pinceau double (vide sinon), avec leurs copies par symétrie.
+    func secondaryDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
+        guard let secondary = settings.resolvedSecondary, !centers.isEmpty else { return [] }
+        var dabs: [SphericalDab] = []
+        let mode: DabMode = tool == .brush ? .paint : .erase
+        for center in centers {
+            let images = symmetry.images(of: center)
+            let previous = symmetry.images(of: previousSecondaryCenter ?? center)
+            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: strokeTilt,
+                                        grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
+            let count = secondary.stampCount(random: secondaryRandom.next())
+            for _ in 0..<count {
+                let random = secondary.hasJitter ? secondaryRandom.dab() : .none
+                for (i, image) in images.enumerated() {
+                    let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
+                    var dab = secondary.dab(at: image, pressure: pressure, color: linearColor, mode: mode, strokeAngle: angle,
+                                            random: random, context: context)
+                    dab.secondary = true
+                    dabs.append(dab)
+                }
+            }
+            previousSecondaryCenter = center
         }
         return dabs
     }

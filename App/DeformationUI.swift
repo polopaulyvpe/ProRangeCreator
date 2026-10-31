@@ -55,9 +55,15 @@ extension CanvasSession {
         guard let shape = QuickShape.fit(quickShapePoints) else { return }
         // Le trait à main levée disparaît et la forme propre est peinte à sa place, dans le même trait.
         canvas.cancelStroke()
-        canvas.beginStroke()
+        canvas.beginStroke(style: settings.strokeStyle(color: linearColor, mode: tool == .brush ? .paint : .erase))
         let spacing = max(settings.radius(pressure: quickShapePressure) * settings.spacing, 1e-4)
-        canvas.add(symmetricDabs(shape.points(spacing: spacing), pressure: quickShapePressure))
+        var dabs = symmetricDabs(shape.points(spacing: spacing), pressure: quickShapePressure)
+        if let secondary = settings.resolvedSecondary {
+            previousSecondaryCenter = nil
+            let step = max(secondary.radius(pressure: quickShapePressure) * secondary.spacing, 1e-4)
+            dabs += secondaryDabs(shape.points(spacing: step), pressure: quickShapePressure)
+        }
+        canvas.add(dabs)
         quickShapeApplied = true
         if case .line = shape { fileMessage = "QuickShape : ligne" } else { fileMessage = "QuickShape : cercle" }
     }

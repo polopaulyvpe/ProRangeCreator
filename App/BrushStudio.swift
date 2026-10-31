@@ -1,5 +1,6 @@
 import PRCore
 import PRImaging
+import simd
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -71,6 +72,25 @@ struct BrushStudioView: View {
     @State private var clearToken = 0
     @State private var importing: (asGrain: Bool, invert: Bool)?
     @State private var showImporter = false
+    /// Pinceau double : pendant qu'on règle le secondaire, `draft` est le secondaire et le principal attend ici.
+    @State private var parkedPrimary: BrushSettings?
+
+    /// Le pinceau complet (principal avec son secondaire), tel qu'il sera appliqué.
+    private var combined: BrushSettings {
+        guard var primary = parkedPrimary else { return draft }
+        primary.secondary = draft
+        return primary
+    }
+
+    private func editSecondary(_ secondary: Bool) {
+        if secondary, parkedPrimary == nil, let second = draft.secondary {
+            parkedPrimary = draft
+            draft = second
+        } else if !secondary, parkedPrimary != nil {
+            draft = combined
+            parkedPrimary = nil
+        }
+    }
 
     init(session: CanvasSession) {
         self.session = session
@@ -104,9 +124,17 @@ struct BrushStudioView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Atelier de pinceaux").font(.system(size: 26, weight: .bold)).foregroundStyle(.white.opacity(0.9))
-            if let image = FlatBrushPainter.preview(draft, width: 240, height: 80, radiusPixels: 16) {
+            if let image = FlatBrushPainter.preview(combined, width: 240, height: 80, radiusPixels: 16) {
                 Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
                     .padding(.vertical, 6)
+            }
+            if draft.secondary != nil || parkedPrimary != nil {
+                // Pinceau double : on règle l'un ou l'autre ; le bloc à dessin montre toujours les deux ensemble.
+                Picker("Pinceau réglé", selection: Binding(get: { parkedPrimary != nil }, set: { editSecondary($0) })) {
+                    Text("Principal").tag(false)
+                    Text("Secondaire").tag(true)
+                }
+                .pickerStyle(.segmented)
             }
             ScrollView {
                 VStack(spacing: 4) {
@@ -135,7 +163,8 @@ struct BrushStudioView: View {
     private var settingsColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(draft.name).font(.system(size: 26, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
+                Text(parkedPrimary == nil ? draft.name : "\(combined.name) — secondaire")
+                    .font(.system(size: 26, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
                 content
             }
             .padding(22)
@@ -145,7 +174,7 @@ struct BrushStudioView: View {
 
     private var pad: some View {
         ZStack(alignment: .top) {
-            BrushPadView(settings: draft, clearToken: clearToken)
+            BrushPadView(settings: combined, clearToken: clearToken)
                 .ignoresSafeArea()
             HStack(spacing: 14) {
                 Menu {
@@ -162,8 +191,8 @@ struct BrushStudioView: View {
                     .padding(.horizontal, 18).padding(.vertical, 11)
                     .background(Capsule().stroke(Color.white.opacity(0.2)))
                 Button {
-                    session.settings = draft
-                    session.showToast(draft.name)
+                    session.settings = combined
+                    session.showToast(combined.name)
                     dismiss()
                 } label: {
                     Image(systemName: "checkmark").font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
@@ -184,7 +213,7 @@ struct BrushStudioView: View {
         case .taper: taper
         case .shape: shape
         case .grain: grain
-        case .rendering: upcoming("Modes de rendu (glacis léger, uniforme, intense…), flux, bords humides et brûlés, mode de fusion : prochain lot.")
+        case .rendering: rendering
         case .wetMix: upcoming("Dilution, charge, attaque, tirage, grade, flou : le pinceau se mélangera à la peinture déjà posée. Dernier lot.")
         case .colorDynamics: upcoming("Variation de teinte, saturation, luminosité par tampon ou par trait, couleur secondaire : prochain lot.")
         case .dynamics: dynamics
@@ -193,6 +222,48 @@ struct BrushStudioView: View {
         case .materials: upcoming("Métal et rugosité servent aux modèles 3D de Procreate : sans effet sur la peinture d'un panorama.")
         case .preview: previewSection
         case .about: about
+        }
+    }
+
+    private var rendering: some View {
+        Group {
+            StudioCard {
+                Text("Mode de rendu").font(.headline)
+                Picker("Mode de rendu", selection: $draft.rendering) {
+                    ForEach(BrushRendering.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                Text("Glacis léger et uniforme : un trait ne fonce pas là où il repasse sur lui-même. Intense et épais : il s'accumule.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            StudioCard {
+                StudioSlider("Flux", value: $draft.flow, range: 0...1)
+                Text("Part de l'opacité posée à chaque tampon : en dessous du maximum, le trait monte progressivement.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            if parkedPrimary == nil {
+                StudioCard {
+                    Text("Pinceau double").font(.headline)
+                    if draft.secondary != nil {
+                        Picker("Combinaison", selection: $draft.dualBlendMode) {
+                            ForEach(DualBlendMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        StudioSlider("Taille du secondaire", value: $draft.secondaryScale, range: 0.1...4) { String(format: "× %.2f", $0) }
+                        Button("Retirer le pinceau secondaire", role: .destructive) { draft.secondary = nil }
+                    } else {
+                        Button("Ajouter un pinceau secondaire") {
+                            var second = draft
+                            second.secondaryBrushes = []
+                            draft.secondary = second
+                            draft.dualBlendMode = .multiply
+                            draft.secondaryScale = 1
+                        }
+                        Text("Un second pinceau dont la couverture se combine à celle du premier (texture, bords cassés…).")
+                            .font(.caption).foregroundStyle(.white.opacity(0.5))
+                    }
+                }
+            }
         }
     }
 
@@ -330,6 +401,15 @@ struct BrushStudioView: View {
     private var pencil: some View {
         Group {
             StudioCard {
+                Text("Courbe de pression").font(.headline)
+                PressureCurveEditor(curve: $draft.pressureCurve)
+                    .frame(height: 220)
+                Button("Réinitialiser la courbe") { draft.pressureCurve = .linear }
+                    .disabled(draft.pressureCurve.isLinear)
+                Text("Glisse un point pour le déplacer ; touche la grille pour en ajouter un.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            StudioCard {
                 Text("Pression").font(.headline)
                 StudioSlider("Taille", value: Binding(get: { draft.pressureAffectsSize ? draft.pressureSizeAmount : 0 },
                                                       set: { draft.pressureSizeAmount = $0; draft.pressureAffectsSize = $0 > 0 }),
@@ -338,6 +418,7 @@ struct BrushStudioView: View {
                 StudioSlider("Opacité", value: Binding(get: { draft.pressureAffectsOpacity ? draft.pressureOpacityAmount : 0 },
                                                          set: { draft.pressureOpacityAmount = $0; draft.pressureAffectsOpacity = $0 > 0 }),
                              range: 0...1)
+                StudioSlider("Flux", value: $draft.pressureFlowAmount, range: 0...1)
             }
             StudioCard {
                 Text("Inclinaison").font(.headline)
@@ -379,18 +460,21 @@ struct BrushStudioView: View {
             }
             StudioCard {
                 Button("Créer un point de réinitialisation") {
-                    session.brushResetPoints[draft.name] = BrushResetPoint(settings: draft, date: Date())
+                    session.brushResetPoints[combined.name] = BrushResetPoint(settings: combined, date: Date())
                 }
-                if let point = session.brushResetPoints[draft.name] {
-                    Button("Réinitialiser le pinceau") { draft = point.settings }
+                if let point = session.brushResetPoints[combined.name] {
+                    Button("Réinitialiser le pinceau") {
+                        parkedPrimary = nil
+                        draft = point.settings
+                    }
                     Text("Dernier point de réinitialisation : \(point.date.formatted(date: .numeric, time: .shortened))")
                         .font(.caption).foregroundStyle(.white.opacity(0.6))
                 }
             }
             StudioCard {
                 Button("Enregistrer dans Mes pinceaux", systemImage: "square.and.arrow.down") {
-                    session.saveBrush(BrushPreset(name: draft.name, settings: draft))
-                    session.showToast("« \(draft.name) » enregistré")
+                    session.saveBrush(BrushPreset(name: combined.name, settings: combined))
+                    session.showToast("« \(combined.name) » enregistré")
                 }
             }
         }
@@ -452,6 +536,74 @@ struct StudioSlider: View {
             .font(.system(size: 16))
             Slider(value: $value, in: range)
         }
+    }
+}
+
+/// Éditeur de courbe de pression : pression du Pencil en abscisse, effet en ordonnée.
+/// On glisse le point le plus proche ; une touche loin de tout point en ajoute un ; les extrémités restent en x = 0 et x = 1.
+struct PressureCurveEditor: View {
+    @Binding var curve: PressureCurve
+    @State private var dragged: Int?
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            let points = curve.points
+            let position: (SIMD2<Double>) -> CGPoint = { p in
+                CGPoint(x: CGFloat(p.x) * size.width, y: CGFloat(1 - p.y) * size.height)
+            }
+            ZStack {
+                Path { path in
+                    for i in 1..<4 {
+                        let x = size.width * CGFloat(i) / 4, y = size.height * CGFloat(i) / 4
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: size.height))
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: size.width, y: y))
+                    }
+                }
+                .stroke(Color.white.opacity(0.08))
+                Path { path in
+                    let steps = 64
+                    for i in 0...steps {
+                        let x = Double(i) / Double(steps)
+                        let p = position([x, curve.value(x)])
+                        if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                    }
+                }
+                .stroke(Color.white.opacity(0.8), lineWidth: 2)
+                ForEach(points.indices, id: \.self) { i in
+                    Circle().fill(Color.accentColor).frame(width: 14, height: 14).position(position(points[i]))
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                let fx = Double(value.location.x / size.width)
+                let fy = Double(1 - value.location.y / size.height)
+                let p = SIMD2<Double>(min(1, max(0, fx)), min(1, max(0, fy)))
+                var list = curve.points
+                if dragged == nil {
+                    let nearest = list.indices.min { simd_distance(list[$0], p) < simd_distance(list[$1], p) }!
+                    if simd_distance(list[nearest], p) < 0.08 {
+                        dragged = nearest
+                    } else {
+                        list.append(p)
+                        curve = PressureCurve(points: list)
+                        dragged = curve.points.firstIndex { simd_distance($0, p) < 1e-9 }
+                        return
+                    }
+                }
+                guard let index = dragged, index < list.count else { return }
+                // Extrémités : seule la hauteur bouge. Points intérieurs : gardés entre leurs voisins.
+                var moved = p
+                if index == 0 { moved.x = 0 } else if index == list.count - 1 { moved.x = 1 } else {
+                    moved.x = min(list[index + 1].x - 0.01, max(list[index - 1].x + 0.01, p.x))
+                }
+                list[index] = moved
+                curve = PressureCurve(points: list)
+            }.onEnded { _ in dragged = nil })
+        }
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.25)))
     }
 }
 

@@ -6,17 +6,28 @@ import simd
 /// Peinture à plat (aperçus de trait, bloc à dessin de l'Atelier) avec le même calcul de dab que sur la sphère
 /// (`BrushSettings.dab`) : taille, opacité, dispersion, rotation, miroir, rondeur, grain, variations, effilement,
 /// vitesse et inclinaison. Le plan de l'image joue le rôle du plan tangent : `pixelsPerRadian` en donne l'échelle.
+/// Comme sur la toile, chaque trait s'accumule dans un masque (`StrokeMask` : glacis, flux, pinceau double)
+/// puis se pose sur les traits précédents.
 struct FlatBrushPainter {
     let width: Int
     let height: Int
-    private(set) var alpha: [Float]
+    /// Traits terminés.
+    private var committed: [Float]
+    /// Masque du trait en cours.
+    private var mask: [SIMD4<Float>]
     var settings: BrushSettings
     let pixelsPerRadian: Double
 
-    private var random = StrokeRandom(seed: 1)
-    private var lastDab: SIMD2<Double>?
-    private var previousDab: SIMD2<Double>?
-    private var distance = 0.0
+    /// Pose des dabs d'un pinceau (principal ou secondaire) le long du trait.
+    private struct Stream {
+        var random = StrokeRandom(seed: 1)
+        var lastDab: SIMD2<Double>?
+        var previousDab: SIMD2<Double>?
+        var distance = 0.0
+    }
+
+    private var primary = Stream()
+    private var secondary = Stream()
     private var speed = 0.0
     private var lastPoint: (position: SIMD2<Double>, time: Double)?
     private var grainOffset = SIMD2<Double>.zero
@@ -28,21 +39,29 @@ struct FlatBrushPainter {
         self.height = height
         self.settings = settings
         self.pixelsPerRadian = pixelsPerRadian
-        alpha = [Float](repeating: 0, count: width * height)
+        committed = [Float](repeating: 0, count: width * height)
+        mask = [SIMD4<Float>](repeating: .zero, count: width * height)
     }
 
     mutating func clear() {
-        alpha = [Float](repeating: 0, count: width * height)
+        committed = [Float](repeating: 0, count: width * height)
+        mask = [SIMD4<Float>](repeating: .zero, count: width * height)
     }
 
-    /// Début d'un trait : tirages du trait (grain, angle de départ) et compteurs remis à zéro.
+    private var style: StrokeStyle { settings.strokeStyle(color: .one, mode: .paint) }
+
+    /// Début d'un trait : le précédent est posé, tirages du trait (grain, angle de départ) et compteurs remis à zéro.
     mutating func begin(seed: UInt64) {
-        random = StrokeRandom(seed: seed)
-        grainOffset = [random.next(), random.next()]
-        rotationOffset = random.next() * 2 * .pi
-        lastDab = nil
-        previousDab = nil
-        distance = 0
+        let style = style
+        for i in mask.indices where mask[i] != .zero {
+            let a = StrokeMask.alpha(mask[i], style: style)
+            committed[i] = a + committed[i] * (1 - a)
+            mask[i] = .zero
+        }
+        primary = Stream(random: StrokeRandom(seed: seed))
+        secondary = Stream(random: StrokeRandom(seed: seed &+ 0x5EC0))
+        grainOffset = [primary.random.next(), primary.random.next()]
+        rotationOffset = primary.random.next() * 2 * .pi
         speed = 0
         lastPoint = nil
     }
@@ -54,35 +73,51 @@ struct FlatBrushPainter {
             speed = speed * 0.7 + instant * 0.3
         }
         lastPoint = (point, time)
-        guard var from = lastDab else {
-            lastDab = point
-            stampAll(at: point, pressure: pressure, tilt: tilt)
+        // Copie locale du flux : on ne peut pas passer une propriété en inout à une méthode mutante de la même structure.
+        var stream = primary
+        advance(&stream, brush: settings, isSecondary: false, to: point, pressure: pressure, tilt: tilt)
+        primary = stream
+        if let second = settings.resolvedSecondary {
+            stream = secondary
+            advance(&stream, brush: second, isSecondary: true, to: point, pressure: pressure, tilt: tilt)
+            secondary = stream
+        }
+    }
+
+    private mutating func advance(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool, to point: SIMD2<Double>,
+                                  pressure: Double, tilt: Double) {
+        guard var from = stream.lastDab else {
+            stream.lastDab = point
+            stampAll(&stream, brush: brush, isSecondary: isSecondary, at: point, pressure: pressure, tilt: tilt)
             return
         }
         while true {
-            let step = settings.spacing(radius: settings.radius(pressure: pressure), random: random.next()) * pixelsPerRadian
+            let step = brush.spacing(radius: brush.radius(pressure: pressure), random: stream.random.next()) * pixelsPerRadian
             let remaining = simd_distance(from, point)
             guard remaining >= max(0.5, step) else { break }
             from += (point - from) / remaining * max(0.5, step)
-            stampAll(at: from, pressure: pressure, tilt: tilt)
+            stampAll(&stream, brush: brush, isSecondary: isSecondary, at: from, pressure: pressure, tilt: tilt)
         }
-        lastDab = from
+        stream.lastDab = from
     }
 
     /// Les tampons d'un dab (Forme > Nombre), avec leurs tirages.
-    private mutating func stampAll(at point: SIMD2<Double>, pressure: Double, tilt: Double) {
-        if let previous = previousDab { distance += simd_distance(previous, point) / pixelsPerRadian }
+    private mutating func stampAll(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool, at point: SIMD2<Double>,
+                                   pressure: Double, tilt: Double) {
+        if let previous = stream.previousDab { stream.distance += simd_distance(previous, point) / pixelsPerRadian }
         var angle = 0.0
-        if let previous = previousDab, simd_distance(previous, point) > 1e-6 {
+        if let previous = stream.previousDab, simd_distance(previous, point) > 1e-6 {
             angle = atan2(-(point.y - previous.y), point.x - previous.x)
         }
-        previousDab = point
-        let context = StrokeContext(distance: distance, speed: speed, tilt: tilt, grainOffset: grainOffset, rotationOffset: rotationOffset)
-        let count = settings.stampCount(random: random.next())
+        stream.previousDab = point
+        let context = StrokeContext(distance: stream.distance, speed: speed, tilt: tilt, grainOffset: grainOffset,
+                                    rotationOffset: rotationOffset)
+        let count = brush.stampCount(random: stream.random.next())
         for _ in 0..<count {
-            let r = settings.hasJitter ? random.dab() : .none
-            let dab = settings.dab(at: Self.origin, pressure: pressure, color: .one, mode: .paint, strokeAngle: angle,
-                                   random: r, context: context)
+            let r = brush.hasJitter ? stream.random.dab() : .none
+            var dab = brush.dab(at: Self.origin, pressure: pressure, color: .one, mode: .paint, strokeAngle: angle,
+                                random: r, context: context)
+            dab.secondary = isSecondary
             // Dispersion : décalage du centre dans le plan tangent, ramené en pixels (y de l'image vers le bas).
             let offset = TangentFrame(center: Self.origin).project(dab.center) * pixelsPerRadian
             stamp(dab, at: point + SIMD2(offset.x, -offset.y))
@@ -96,7 +131,6 @@ struct FlatBrushPainter {
         let x0 = max(0, Int(center.x - reach)), x1 = min(width - 1, Int(center.x + reach))
         let y0 = max(0, Int(center.y - reach)), y1 = min(height - 1, Int(center.y + reach))
         guard x0 <= x1, y0 <= y1 else { return }
-        let opacity = dab.color.w
         let pixelAngle = 1 / pixelsPerRadian
         for py in y0...y1 {
             for px in x0...x1 {
@@ -121,8 +155,8 @@ struct FlatBrushPainter {
                     }
                     a *= 1 - Float(tip.grainDepth) * (1 - g)
                 }
-                let i = py * width + px
-                alpha[i] += a * opacity * (1 - alpha[i])
+                StrokeMask.accumulate(&mask[py * width + px], coverage: a, opacity: dab.color.w, flow: dab.flow,
+                                      secondary: dab.secondary)
             }
         }
     }
@@ -130,8 +164,11 @@ struct FlatBrushPainter {
     /// Blanc sur transparent.
     func image() -> CGImage? {
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let style = style
         for i in 0..<(width * height) {
-            let a = UInt8(min(1, alpha[i]) * 255 + 0.5)
+            // Traits terminés, plus le trait en cours posé par-dessus.
+            let stroke = StrokeMask.alpha(mask[i], style: style)
+            let a = UInt8(min(1, stroke + committed[i] * (1 - stroke)) * 255 + 0.5)
             bytes[i * 4] = a
             bytes[i * 4 + 1] = a
             bytes[i * 4 + 2] = a

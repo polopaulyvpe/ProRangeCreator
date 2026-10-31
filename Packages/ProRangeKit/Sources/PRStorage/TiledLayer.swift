@@ -232,6 +232,36 @@ public final class TiledLayer {
         return touched
     }
 
+    /// Ajoute un dab au trait en cours : sa couverture s'accumule dans le masque du trait (`buffer`), puis les texels touchés
+    /// sont recalculés depuis leur état d'avant le trait (voir `StrokeMask`). Même découpage et même sélection que `stamp`.
+    @discardableResult
+    public func stamp(_ dab: SphericalDab, into buffer: StrokeBuffer, style: StrokeStyle, space: BlendSpace = .perceptual,
+                      alphaLock: Bool = false, selection: ((TileCoord) -> [Float]?)? = nil) -> Set<TileCoord> {
+        let evaluator = DabEvaluator(dab, pixelAngle: geometry.pixelAngle)
+        let span = evaluator.span(in: geometry)
+        let side = TileSize.side
+        var touched = Set<TileCoord>()
+        for columns in span.columns {
+            for ty in (span.rows.lowerBound / side)...(span.rows.upperBound / side) {
+                for tx in (columns.lowerBound / side)...(columns.upperBound / side) {
+                    let xs = max(columns.lowerBound, tx * side)...min(columns.upperBound, tx * side + side - 1)
+                    let ys = max(span.rows.lowerBound, ty * side)...min(span.rows.upperBound, ty * side + side - 1)
+                    let coord = TileCoord(x: tx, y: ty)
+                    var mask: [Float]?
+                    if let selection {
+                        guard let values = selection(coord) else { continue }
+                        mask = values
+                    }
+                    if strokeTile(coord, xs: xs, ys: ys, evaluator: evaluator, buffer: buffer, style: style, space: space,
+                                  alphaLock: alphaLock, mask: mask) {
+                        touched.insert(coord)
+                    }
+                }
+            }
+        }
+        return touched
+    }
+
     /// Remplace une tuile par des pixels bruts du format du calque (résultat d'un trait peint sur le GPU). Enregistré dans l'historique.
     public func replaceTile(_ coord: TileCoord, with bytes: [UInt8]) {
         precondition(bytes.count == format.bytesPerTile, "taille de tuile invalide")
@@ -392,6 +422,61 @@ public final class TiledLayer {
                 }
             }
         }
+        putPixels(pixels, at: coord)
+        return true
+    }
+
+    private func strokeTile(_ coord: TileCoord, xs: ClosedRange<Int>, ys: ClosedRange<Int>, evaluator: DabEvaluator,
+                            buffer: StrokeBuffer, style: StrokeStyle, space: BlendSpace, alphaLock: Bool, mask: [Float]?) -> Bool {
+        var coverage = [Float](repeating: 0, count: xs.count * ys.count)
+        var any = false
+        var i = 0
+        let side = TileSize.side
+        for y in ys {
+            for x in xs {
+                var a = evaluator.coverage(at: geometry.direction(x: x, y: y))
+                if let mask { a *= mask[(y - coord.y * side) * side + (x - coord.x * side)] }
+                coverage[i] = a
+                if a > 0 { any = true }
+                i += 1
+            }
+        }
+        guard any else { return false }
+
+        let format = format
+        let dab = evaluator.dab
+        var pixels = takePixels(coord)
+        // Premier passage du trait sur cette tuile : on garde ses pixels d'avant et on ouvre son masque.
+        if buffer.originals[coord] == nil {
+            buffer.originals[coord] = pixels
+            buffer.masks[coord] = [SIMD4<Float16>](repeating: .zero, count: TileSize.pixelCount)
+        }
+        let original = buffer.originals[coord]!
+        var strokeMask = buffer.masks.removeValue(forKey: coord)!
+        original.withUnsafeBytes { source in
+            pixels.withUnsafeMutableBytes { raw in
+                let base = raw.baseAddress!
+                var i = 0
+                for y in ys {
+                    let row = (y - coord.y * side) * side
+                    for x in xs {
+                        let a = coverage[i]
+                        i += 1
+                        if a <= 0 { continue }
+                        let index = row + (x - coord.x * side)
+                        var m = StrokeBuffer.widen(strokeMask[index])
+                        StrokeMask.accumulate(&m, coverage: a, opacity: dab.color.w, flow: dab.flow, secondary: dab.secondary)
+                        let stored = StrokeBuffer.narrow(m)
+                        strokeMask[index] = stored
+                        let before = Self.read(source.baseAddress!, index, format)
+                        let p = StrokeMask.composite(before, alpha: StrokeMask.alpha(StrokeBuffer.widen(stored), style: style),
+                                                     style: style, space: space, alphaLock: alphaLock)
+                        Self.write(base, index, p, format)
+                    }
+                }
+            }
+        }
+        buffer.masks[coord] = strokeMask
         putPixels(pixels, at: coord)
         return true
     }

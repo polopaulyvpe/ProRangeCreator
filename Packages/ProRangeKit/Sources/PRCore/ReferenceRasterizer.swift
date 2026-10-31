@@ -60,6 +60,10 @@ public struct SphericalDab: Sendable {
     public var mode: DabMode
     /// Forme, grain et rotation ; nil = dab rond classique.
     public var tip: DabTip?
+    /// Flux (Atelier > Rendu) : part de l'opacité ajoutée au masque du trait à chaque tampon.
+    public var flow: Float = 1
+    /// Tampon du pinceau secondaire d'un pinceau double (canaux z, w du masque du trait).
+    public var secondary = false
 
     public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>, mode: DabMode = .paint, tip: DabTip? = nil) {
         self.center = center
