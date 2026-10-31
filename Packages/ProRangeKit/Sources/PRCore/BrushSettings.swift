@@ -58,6 +58,9 @@ public struct BrushSettings: Equatable, Sendable {
     public var randomFlip = false
     /// Rondeur de la forme : 1 = telle quelle, moins = écrasée.
     public var shapeRoundness: Double = 1
+    /// Variation de rondeur verticale et horizontale : la forme est écrasée au hasard, jusqu'à cette fraction, à chaque tampon.
+    public var roundnessJitter: Double = 0
+    public var roundnessJitterX: Double = 0
     /// Nombre de tampons posés à chaque dab (1 à 16), et sa variation (jusqu'à cette fraction en moins).
     public var stampCount = 1
     public var stampCountJitter: Double = 0
@@ -170,7 +173,7 @@ public struct BrushSettings: Equatable, Sendable {
 
     public var hasJitter: Bool {
         spacingJitter > 0 || scatter > 0 || longitudinalJitter > 0 || sizeJitter > 0 || opacityJitter > 0 || rotationJitter > 0 || randomFlip
-            || stampCountJitter > 0 || grainDepthJitter > 0
+            || stampCountJitter > 0 || grainDepthJitter > 0 || roundnessJitter > 0 || roundnessJitterX > 0
     }
 
     public init(radiusDegrees: Double = 2, opacity: Double = 1, hardness: Double = 0.8, spacing: Double = 0.15,
@@ -291,9 +294,10 @@ public struct BrushSettings: Equatable, Sendable {
                 grainOffset += [(dx * c + dy * s) * travel, (-dx * s + dy * c) * travel]
             }
             tip = DabTip(shape: shape, grain: grain, rotation: rotation, grainScale: grainScale, grainDepth: depth,
-                         flipX: randomFlip && random.flip, roundness: min(1, max(0.05, shapeRoundness)),
+                         flipX: randomFlip && random.flip,
+                         roundness: max(0.05, min(1, shapeRoundness) * (1 - min(1, max(0, roundnessJitter)) * random.roundY)),
                          grainMoving: grainMoving, grainRotation: grainRotation, grainOffset: grainOffset,
-                         grainBlend: grainBlendMode)
+                         grainBlend: grainBlendMode, width: max(0.05, 1 - min(1, max(0, roundnessJitterX)) * random.roundX))
         }
         var dab = SphericalDab(center: position, radius: size, hardness: hardness,
                                color: SIMD4<Float>(color.x, color.y, color.z, Float(alpha)), mode: mode, tip: tip)
@@ -368,6 +372,9 @@ public struct DabRandom: Sendable, Equatable {
     public var depth: Double = 0
     /// Variation linéaire (centrée sur 0,5).
     public var along: Double = 0.5
+    /// Variations de rondeur verticale et horizontale.
+    public var roundY: Double = 0
+    public var roundX: Double = 0
 
     public init(size: Double, opacity: Double, rotation: Double, scatter: Double, flip: Bool) {
         self.size = size
@@ -400,6 +407,8 @@ public struct StrokeRandom: Sendable {
         var random = DabRandom(size: next(), opacity: next(), rotation: next(), scatter: next(), flip: next() < 0.5)
         random.depth = next()
         random.along = next()
+        random.roundY = next()
+        random.roundX = next()
         return random
     }
 }

@@ -86,12 +86,15 @@ public struct DabTip: Sendable, Equatable {
     public var grainOffset: SIMD2<Double>
     /// Mode de fusion du grain avec la forme (Atelier > Grain > Mode de fusion) ; produit = l'effet classique.
     public var grainBlend: DualBlendMode
+    /// Largeur de la forme : 1 = telle quelle, moins = écrasée dans le sens de sa largeur (variation de rondeur horizontale).
+    public var width: Double
 
     public init(shape: BrushTexture? = nil, grain: BrushTexture? = nil, rotation: Double = 0,
                 grainScale: Double = 0.05, grainDepth: Double = 1, flipX: Bool = false, roundness: Double = 1,
                 grainMoving: Bool = false, grainRotation: Double = 0, grainOffset: SIMD2<Double> = .zero,
-                grainBlend: DualBlendMode = .multiply) {
+                grainBlend: DualBlendMode = .multiply, width: Double = 1) {
         self.grainBlend = grainBlend
+        self.width = width
         self.roundness = roundness
         self.grainMoving = grainMoving
         self.grainRotation = grainRotation
@@ -136,7 +139,7 @@ public struct DabTip: Sendable, Equatable {
     public func shapeValue(at p: SIMD2<Double>, radius: Double) -> Float? {
         guard let shape else { return nil }
         let c = cos(rotation), s = sin(rotation)
-        let rotatedX = (p.x * c + p.y * s) / radius
+        let rotatedX = (p.x * c + p.y * s) / radius / max(0.05, width)
         let x = flipX ? -rotatedX : rotatedX
         let y = (-p.x * s + p.y * c) / radius / max(0.05, roundness)
         guard abs(x) <= 1, abs(y) <= 1 else { return 0 }

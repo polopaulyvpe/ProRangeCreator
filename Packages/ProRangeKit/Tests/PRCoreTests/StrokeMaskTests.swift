@@ -99,6 +99,21 @@ final class StrokeMaskTests: XCTestCase {
         XCTAssertGreaterThan(p.x, 0)
         XCTAssertEqual(p.y, 0, accuracy: 1e-9)
 
+        // Variation de rondeur : la forme est écrasée en hauteur et en largeur selon les tirages.
+        var squash = BrushSettings.defaultBrush
+        squash.shape = BrushTexture(name: "plein", size: 1, values: [1])
+        squash.roundnessJitter = 0.5
+        squash.roundnessJitterX = 0.4
+        var draw = DabRandom.none
+        draw.roundY = 1
+        draw.roundX = 1
+        let squashed = squash.dab(at: [0, 0, -1], pressure: 1, color: .one, mode: .paint, random: draw).tip!
+        XCTAssertEqual(squashed.roundness, 0.5, accuracy: 1e-12)
+        XCTAssertEqual(squashed.width, 0.6, accuracy: 1e-12)
+        let r = squash.radius(pressure: 1)
+        XCTAssertEqual(squashed.shapeValue(at: [0.7 * r, 0], radius: r), 0, "hors de la largeur réduite")
+        XCTAssertEqual(squashed.shapeValue(at: [0.5 * r, 0], radius: r), 1)
+
         // Vitesse → espacement.
         jitter.speedSpacing = 1
         XCTAssertEqual(jitter.spacing(radius: 1, random: 0.5, speed: 3), 2 * jitter.spacing(radius: 1, random: 0.5), accuracy: 1e-12)

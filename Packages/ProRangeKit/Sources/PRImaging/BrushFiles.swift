@@ -143,7 +143,7 @@ public enum ProcreateBrushImport {
         "dynamicsPressureOpacityCurve", "dynamicsPressureTransferModulationCurve",
         "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
         "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
-        "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter",
+        "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter", "jitterShapeRoundness", "jitterShapeRoundnessX",
     ]
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
@@ -290,10 +290,19 @@ public enum ProcreateBrushImport {
             mapped.append("rondeur → \(pct(settings.shapeRoundness))")
         }
         if let count = number("shapeCount"), count > 0 {
-            settings.stampCount = count <= 1 ? 1 + Int((count * 15).rounded()) : min(16, Int(count))
+            // Curseur 0…1 sur 1…16 tampons (relevé sur Minke : 0,0625 = 1).
+            settings.stampCount = count <= 1 ? max(1, Int((count * 16).rounded())) : min(16, Int(count))
             mapped.append("nombre de tampons → \(settings.stampCount)")
         }
         if let jitter = number("shapeCountJitter"), jitter > 0 { settings.stampCountJitter = min(1, jitter) }
+        if let jitter = number("jitterShapeRoundness"), jitter > 0 {
+            settings.roundnessJitter = min(1, jitter)
+            mapped.append("variation de rondeur verticale → \(pct(jitter))")
+        }
+        if let jitter = number("jitterShapeRoundnessX"), jitter > 0 {
+            settings.roundnessJitterX = min(1, jitter)
+            mapped.append("variation de rondeur horizontale → \(pct(jitter))")
+        }
         if (brush["shapeRandomise"] as? Bool) == true {
             settings.randomizeRotation = true
             mapped.append("angle de départ aléatoire")
@@ -545,7 +554,7 @@ public enum NativeBrushFile {
         ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
         ("maxOpacity", \.maxOpacity), ("minOpacity", \.minOpacity),
         ("flow", \.flow), ("pressureFlowAmount", \.pressureFlowAmount), ("secondaryScale", \.secondaryScale),
-        ("longitudinalJitter", \.longitudinalJitter), ("speedSpacing", \.speedSpacing), ("grainMovement", \.grainMovement),
+        ("roundnessJitter", \.roundnessJitter), ("roundnessJitterX", \.roundnessJitterX), ("longitudinalJitter", \.longitudinalJitter), ("speedSpacing", \.speedSpacing), ("grainMovement", \.grainMovement),
         ("wetDilution", \.wetDilution), ("wetCharge", \.wetCharge), ("wetAttack", \.wetAttack), ("wetPull", \.wetPull),
         ("wetGrade", \.wetGrade), ("wetBlur", \.wetBlur), ("wetBlurJitter", \.wetBlurJitter), ("wetnessJitter", \.wetnessJitter),
     ] }

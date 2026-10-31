@@ -23,7 +23,7 @@ public final class BrushEngine {
         var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
         var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, rondeur
         var grain2: SIMD4<Float>   // décalage du grain mobile (x, y), cos et sin de sa rotation
-        var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), inutilisés
+        var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), largeur de la forme, inutilisés
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -139,7 +139,8 @@ public final class BrushEngine {
         let gpu = GPUDab(center: center, params: params, color: dab.color,
                          options: SIMD4<Float>(spaceFlag, lockFlag, dab.secondary ? 1 : 0, dab.flow), tip: tipVector,
                          grain: grainVector, grain2: grain2Vector,
-                         extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), 0, 0, 0), region: .zero)
+                         extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), Float(max(0.05, tip?.width ?? 1)), 0, 0),
+                         region: .zero)
         var regions: [SIMD4<Int32>] = []
         var tiles: [TileCoord] = []
         for columns in span.columns {
@@ -332,7 +333,7 @@ public final class BrushEngine {
         }
         if (dab.tip.z > 0.5) {
             // Forme : tournée, retournée, écrasée selon la rondeur, ramenée au carré [-1, 1]².
-            float qx = (px * dab.tip.x + py * dab.tip.y) / dab.center.w;
+            float qx = (px * dab.tip.x + py * dab.tip.y) / dab.center.w / dab.extra.y;
             if (dab.grain.z > 0.5) { qx = -qx; }
             float qy = (-px * dab.tip.y + py * dab.tip.x) / dab.center.w / max(0.05, dab.grain.w);
             if (abs(qx) > 1.0 || abs(qy) > 1.0) { return false; }

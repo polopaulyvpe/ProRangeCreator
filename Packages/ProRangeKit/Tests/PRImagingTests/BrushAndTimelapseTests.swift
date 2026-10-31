@@ -70,6 +70,9 @@ final class FakeDualBrush: NSObject, NSCoding {
         coder.encode(true, forKey: "renderingModulatedTransfer")
         coder.encode(0.01, forKey: "dynamicsLoad")
         coder.encode(0.8, forKey: "dynamicsMixSoftening")
+        coder.encode(0.0625, forKey: "shapeCount")
+        coder.encode(0.36, forKey: "jitterShapeRoundness")
+        coder.encode(0.3, forKey: "jitterShapeRoundnessX")
         coder.encode(FakeCurve(["{0.000000, 0.000000}", "{1.000000, 1.000000}", "{0.400000, 0.600000}"]),
                      forKey: "dynamicsPressureOverall")
     }
@@ -103,6 +106,9 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(s.rendering, .uniformBlending)
         XCTAssertEqual(s.wetCharge, 0.01, accuracy: 1e-9)
         XCTAssertEqual(s.wetGrade, 0.8, accuracy: 1e-9)
+        XCTAssertEqual(s.stampCount, 1, "0,0625 = 1 tampon, comme l'affiche Procreate")
+        XCTAssertEqual(s.roundnessJitter, 0.36, accuracy: 1e-9)
+        XCTAssertEqual(s.roundnessJitterX, 0.3, accuracy: 1e-9)
 
         // Le .prbrush garde tout : secondaire, combinaison, courbe, flux, rendu.
         var edited = s

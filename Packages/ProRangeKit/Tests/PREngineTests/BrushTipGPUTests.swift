@@ -32,7 +32,7 @@ final class BrushTipGPUTests: XCTestCase {
             // Grain en densité linéaire + (le grain creuse la forme) et texturé en incrustation.
             SphericalDab(center: Equirect.direction(latitude: -0.5, longitude: 2.2), radius: 0.3, hardness: 1, color: [0.9, 0.9, 0.2, 1],
                          tip: DabTip(shape: shape, grain: grain, rotation: 1.1, grainScale: 0.1, grainDepth: 0.9,
-                                     grainMoving: true, grainOffset: [0.1, 0.2], grainBlend: .linearBurn)),
+                                     grainMoving: true, grainOffset: [0.1, 0.2], grainBlend: .linearBurn, width: 0.6)),
             SphericalDab(center: Equirect.direction(latitude: 0.6, longitude: 1.2), radius: 0.25, hardness: 0.7, color: [0.3, 0.9, 0.9, 1],
                          tip: DabTip(grain: grain, grainScale: 0.15, grainDepth: 0.7, grainBlend: .overlay)),
         ]

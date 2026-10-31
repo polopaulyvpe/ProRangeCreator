@@ -325,6 +325,8 @@ struct BrushStudioView: View {
                              range: 1...16) { "\(Int($0))" }
                 StudioSlider("Variation du nombre", value: $draft.stampCountJitter, range: 0...1)
                 StudioSlider("Rondeur", value: $draft.shapeRoundness, range: 0.05...1)
+                StudioSlider("Variation de rondeur verticale", value: $draft.roundnessJitter, range: 0...1)
+                StudioSlider("Variation de rondeur horizontale", value: $draft.roundnessJitterX, range: 0...1)
             }
         }
     }
