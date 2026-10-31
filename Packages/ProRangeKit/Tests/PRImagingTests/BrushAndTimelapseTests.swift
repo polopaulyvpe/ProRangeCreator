@@ -61,6 +61,15 @@ final class FakeDualBrush: NSObject, NSCoding {
         coder.encode(0.25, forKey: "dynamicsPressureOpacityTransfer")
         coder.encode(0.1, forKey: "dynamicsPressureOpacity")
         coder.encode(0.7, forKey: "dynamicsGlazedFlow")
+        coder.encode(0.1, forKey: "minSize")
+        coder.encode(0.0, forKey: "textureApplication")
+        coder.encode(1.0, forKey: "textureMovement")
+        coder.encode(8.0, forKey: "grainBlendMode")
+        coder.encode(0.05, forKey: "plotJitterLongitudinal")
+        coder.encode(true, forKey: "renderingRecursiveMixing")
+        coder.encode(true, forKey: "renderingModulatedTransfer")
+        coder.encode(0.01, forKey: "dynamicsLoad")
+        coder.encode(0.8, forKey: "dynamicsMixSoftening")
         coder.encode(FakeCurve(["{0.000000, 0.000000}", "{1.000000, 1.000000}", "{0.400000, 0.600000}"]),
                      forKey: "dynamicsPressureOverall")
     }
@@ -84,6 +93,16 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(s.flow, 0.7, accuracy: 1e-9)
         XCTAssertEqual(s.pressureCurve.points.count, 3)
         XCTAssertEqual(s.pressureCurve.value(0.4), 0.6, accuracy: 1e-9)
+        XCTAssertEqual(s.minimumSize, 0, "taille min = borne du curseur, pas taille à pression nulle")
+        XCTAssertEqual(s.minSizeDegrees, 0.9, accuracy: 1e-9)
+        XCTAssertEqual(s.maxSizeDegrees, s.radiusDegrees)
+        XCTAssertTrue(s.grainMoving)
+        XCTAssertEqual(s.grainMovement, 1, "rouleau")
+        XCTAssertEqual(s.grainBlendMode, .linearBurn)
+        XCTAssertEqual(s.longitudinalJitter, 0.05, accuracy: 1e-9)
+        XCTAssertEqual(s.rendering, .uniformBlending)
+        XCTAssertEqual(s.wetCharge, 0.01, accuracy: 1e-9)
+        XCTAssertEqual(s.wetGrade, 0.8, accuracy: 1e-9)
 
         // Le .prbrush garde tout : secondaire, combinaison, courbe, flux, rendu.
         var edited = s
@@ -95,6 +114,11 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(back.flow, 0.7, accuracy: 1e-9)
         XCTAssertEqual(back.pressureFlowAmount, 0.1, accuracy: 1e-9)
         XCTAssertEqual(back.rendering, .intenseGlaze)
+        XCTAssertEqual(back.grainBlendMode, .linearBurn)
+        XCTAssertEqual(back.grainMovement, 1)
+        XCTAssertEqual(back.longitudinalJitter, 0.05, accuracy: 1e-9)
+        XCTAssertEqual(back.wetCharge, 0.01, accuracy: 1e-9)
+        XCTAssertEqual(back.minSizeDegrees, s.minSizeDegrees)
     }
 
     private var directory: URL!

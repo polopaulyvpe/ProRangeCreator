@@ -84,10 +84,14 @@ public struct DabTip: Sendable, Equatable {
     public var grainRotation: Double
     /// Décalage du grain mobile, en motifs.
     public var grainOffset: SIMD2<Double>
+    /// Mode de fusion du grain avec la forme (Atelier > Grain > Mode de fusion) ; produit = l'effet classique.
+    public var grainBlend: DualBlendMode
 
     public init(shape: BrushTexture? = nil, grain: BrushTexture? = nil, rotation: Double = 0,
                 grainScale: Double = 0.05, grainDepth: Double = 1, flipX: Bool = false, roundness: Double = 1,
-                grainMoving: Bool = false, grainRotation: Double = 0, grainOffset: SIMD2<Double> = .zero) {
+                grainMoving: Bool = false, grainRotation: Double = 0, grainOffset: SIMD2<Double> = .zero,
+                grainBlend: DualBlendMode = .multiply) {
+        self.grainBlend = grainBlend
         self.roundness = roundness
         self.grainMoving = grainMoving
         self.grainRotation = grainRotation
@@ -119,6 +123,13 @@ public struct DabTip: Sendable, Equatable {
         let gy = grain.sample(d.x * s, d.z * s, wrap: true)
         let gz = grain.sample(d.x * s, d.y * s, wrap: true)
         return Float(w.x) * gx + Float(w.y) * gy + Float(w.z) * gz
+    }
+
+    /// Couverture `base` de la forme combinée au grain `g` : le grain, atténué par la profondeur, est fusionné à la forme.
+    /// En produit, c'est `base × (1 − profondeur × (1 − g))` ; en densité linéaire +, le grain creuse la forme (bords cassés).
+    @inline(__always)
+    public func applyGrain(_ base: Float, _ g: Float) -> Float {
+        grainBlend.combine(base, 1 - Float(grainDepth) * (1 - g))
     }
 
     /// Couverture de la forme au point `p` du plan tangent (radians), pour un rayon donné ; nil si hors du carré.

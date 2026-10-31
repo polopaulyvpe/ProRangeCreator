@@ -412,7 +412,7 @@ final class CanvasSession {
             return
         }
         guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
-        let spacing = settings.spacing(radius: settings.radius(pressure: pressure), random: strokeRandom.next())
+        let spacing = settings.spacing(radius: settings.radius(pressure: pressure), random: strokeRandom.next(), speed: strokeSpeed)
         let centers = sampler.add(d, spacing: spacing)
         switch tool {
         case .smudge: applySmudge(centers, pressure: pressure)
@@ -421,7 +421,7 @@ final class CanvasSession {
         default:
             var secondaryCenters: [Vec3] = []
             if let secondary = settings.resolvedSecondary {
-                let step = secondary.spacing(radius: secondary.radius(pressure: pressure), random: secondaryRandom.next())
+                let step = secondary.spacing(radius: secondary.radius(pressure: pressure), random: secondaryRandom.next(), speed: strokeSpeed)
                 secondaryCenters = secondarySampler.add(d, spacing: step)
             }
             canvas.add(symmetricDabs(centers, pressure: pressure) + secondaryDabs(secondaryCenters, pressure: pressure))

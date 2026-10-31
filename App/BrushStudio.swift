@@ -214,7 +214,7 @@ struct BrushStudioView: View {
         case .shape: shape
         case .grain: grain
         case .rendering: rendering
-        case .wetMix: upcoming("Dilution, charge, attaque, tirage, grade, flou : le pinceau se mélangera à la peinture déjà posée. Dernier lot.")
+        case .wetMix: wetMix
         case .colorDynamics: upcoming("Variation de teinte, saturation, luminosité par tampon ou par trait, couleur secondaire : prochain lot.")
         case .dynamics: dynamics
         case .pencil: pencil
@@ -263,6 +263,26 @@ struct BrushStudioView: View {
                             .font(.caption).foregroundStyle(.white.opacity(0.5))
                     }
                 }
+            }
+        }
+    }
+
+    private var wetMix: some View {
+        Group {
+            StudioCard {
+                StudioSlider("Dilution", value: $draft.wetDilution, range: 0...1)
+                StudioSlider("Charge", value: $draft.wetCharge, range: 0...1)
+                StudioSlider("Attaque", value: $draft.wetAttack, range: 0...1)
+                StudioSlider("Tirage", value: $draft.wetPull, range: 0...1)
+                StudioSlider("Grade", value: $draft.wetGrade, range: 0...1)
+                StudioSlider("Flou", value: $draft.wetBlur, range: 0...1)
+                StudioSlider("Variation du flou", value: $draft.wetBlurJitter, range: 0...1)
+                StudioSlider("Variation d'humidité", value: $draft.wetnessJitter, range: 0...1)
+            }
+            StudioCard {
+                Label("Effet sur la toile à venir", systemImage: "clock").font(.headline)
+                Text("Ces réglages sont lus et gardés avec le pinceau, mais le mélange avec la peinture déjà posée n'est pas encore calculé. Sans dilution (comme Minke), il ne change rien.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
         }
     }
@@ -330,6 +350,11 @@ struct BrushStudioView: View {
                     Text("Texturé").tag(false)
                 }
                 .pickerStyle(.segmented)
+                if draft.grainMoving {
+                    StudioSlider("Mouvement", value: $draft.grainMovement, range: 0...1) { v in
+                        v <= 0 ? "Glisse" : v >= 1 ? "Rouleau" : "\(Int((v * 100).rounded())) %"
+                    }
+                }
             }
             StudioCard {
                 StudioSlider("Échelle", value: $draft.grainScaleDegrees, range: 0.2...30) { String(format: "%.1f°", $0) }
@@ -338,6 +363,9 @@ struct BrushStudioView: View {
                 StudioSlider("Profondeur minimale", value: $draft.grainDepthMinimum, range: 0...1)
                 StudioSlider("Variation de profondeur", value: $draft.grainDepthJitter, range: 0...1)
                 Toggle("Décalage aléatoire", isOn: $draft.grainOffsetJitter)
+                Picker("Mode de fusion", selection: $draft.grainBlendMode) {
+                    ForEach(DualBlendMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
             }
             StudioCard {
                 StudioSlider("Contraste", value: $draft.grainContrast, range: -1...1, signed: true)
@@ -355,6 +383,7 @@ struct BrushStudioView: View {
             StudioSlider("Espacement", value: $draft.spacing, range: 0.02...4) { "\(Int($0 * 50)) %" }
             StudioSlider("Variation d'espacement", value: $draft.spacingJitter, range: 0...1)
             StudioSlider("Dispersion latérale", value: $draft.scatter, range: 0...2)
+            StudioSlider("Variation linéaire", value: $draft.longitudinalJitter, range: 0...2)
         }
     }
 
@@ -390,6 +419,7 @@ struct BrushStudioView: View {
             StudioCard {
                 StudioSlider("Vitesse → taille", value: $draft.speedSize, range: -1...1, signed: true)
                 StudioSlider("Vitesse → opacité", value: $draft.speedOpacity, range: -1...1, signed: true)
+                StudioSlider("Vitesse → espacement", value: $draft.speedSpacing, range: 0...1)
             }
             StudioCard {
                 StudioSlider("Variation de taille", value: $draft.sizeJitter, range: 0...1)

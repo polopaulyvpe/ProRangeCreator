@@ -65,6 +65,45 @@ final class StrokeMaskTests: XCTestCase {
         XCTAssertEqual(erased, .zero)
     }
 
+    func testGrainBlendRollingGrainAndJitters() {
+        // Fusion du grain : produit = l'ancien calcul ; densité linéaire + = le grain creuse la forme.
+        var tip = DabTip(grain: BrushTexture(name: "g", size: 1, values: [0.4]), grainDepth: 1)
+        XCTAssertEqual(tip.applyGrain(0.5, 0.4), 0.2, accuracy: 1e-6)
+        tip.grainBlend = .linearBurn
+        XCTAssertEqual(tip.applyGrain(0.5, 0.4), 0, "0,5 + 0,4 − 1 < 0 : trou")
+        XCTAssertEqual(tip.applyGrain(1, 0.4), 0.4, accuracy: 1e-6)
+
+        // Rouleau : le décalage du grain avance avec la longueur du trait, dans sa direction.
+        var brush = BrushSettings.defaultBrush
+        brush.grainSource = BrushTexture(name: "g", size: 2, values: [0, 1, 1, 0])
+        brush.refreshGrain()
+        brush.grainMoving = true
+        brush.grainScaleDegrees = 2
+        brush.grainMovement = 1
+        let scale = 2 * Double.pi / 180
+        let a = brush.dab(at: [0, 0, -1], pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: 0))
+        let b = brush.dab(at: [0, 0, -1], pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: 0.1))
+        XCTAssertEqual(b.tip!.grainOffset.x - a.tip!.grainOffset.x, 0.1 / scale, accuracy: 1e-9)
+        XCTAssertEqual(b.tip!.grainOffset.y, 0, accuracy: 1e-9)
+        brush.grainMovement = 0
+        let glide = brush.dab(at: [0, 0, -1], pressure: 1, color: .one, mode: .paint, context: StrokeContext(distance: 0.1))
+        XCTAssertEqual(glide.tip!.grainOffset, .zero, "glisse : le grain reste collé au tampon")
+
+        // Variation linéaire : décalage le long du trait (ici vers l'est), pas en travers.
+        var jitter = BrushSettings.defaultBrush
+        jitter.longitudinalJitter = 1
+        var random = DabRandom.none
+        random.along = 1
+        let moved = jitter.dab(at: [0, 0, -1], pressure: 1, color: .one, mode: .paint, random: random)
+        let p = TangentFrame(center: [0, 0, -1]).project(moved.center)
+        XCTAssertGreaterThan(p.x, 0)
+        XCTAssertEqual(p.y, 0, accuracy: 1e-9)
+
+        // Vitesse → espacement.
+        jitter.speedSpacing = 1
+        XCTAssertEqual(jitter.spacing(radius: 1, random: 0.5, speed: 3), 2 * jitter.spacing(radius: 1, random: 0.5), accuracy: 1e-12)
+    }
+
     func testFlowAndCurvesInBrushSettings() {
         var brush = BrushSettings.defaultBrush
         brush.flow = 0.5

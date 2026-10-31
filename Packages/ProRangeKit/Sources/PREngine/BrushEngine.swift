@@ -14,7 +14,7 @@ public final class BrushEngine {
         case noFunction
     }
 
-    /// Paramètres d'un dab pour le kernel (même disposition qu'en MSL : huit vecteurs de 16 octets).
+    /// Paramètres d'un dab pour le kernel (même disposition qu'en MSL : neuf vecteurs de 16 octets).
     struct GPUDab {
         var center: SIMD4<Float>   // direction, rayon
         var params: SIMD4<Float>   // dureté, taille angulaire d'un texel, cos(portée), mode (0 peindre, 1 effacer)
@@ -23,6 +23,7 @@ public final class BrushEngine {
         var tip: SIMD4<Float>      // cos(rotation), sin(rotation), forme présente, grain présent
         var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, rondeur
         var grain2: SIMD4<Float>   // décalage du grain mobile (x, y), cos et sin de sa rotation
+        var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), inutilisés
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -137,7 +138,8 @@ public final class BrushEngine {
         let grain2Vector = SIMD4<Float>(Float(offset.x), Float(offset.y), Float(cos(grainRotation)), Float(sin(grainRotation)))
         let gpu = GPUDab(center: center, params: params, color: dab.color,
                          options: SIMD4<Float>(spaceFlag, lockFlag, dab.secondary ? 1 : 0, dab.flow), tip: tipVector,
-                         grain: grainVector, grain2: grain2Vector, region: .zero)
+                         grain: grainVector, grain2: grain2Vector,
+                         extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), 0, 0, 0), region: .zero)
         var regions: [SIMD4<Int32>] = []
         var tiles: [TileCoord] = []
         for columns in span.columns {
@@ -249,6 +251,7 @@ public final class BrushEngine {
         float4 tip;
         float4 grain;
         float4 grain2;
+        float4 extra;
         int4 region;
     };
 
@@ -280,6 +283,22 @@ public final class BrushEngine {
         if (hardness >= 1.0 || rho <= hardness) { return edge; }
         float t = min(1.0, (rho - hardness) / (1.0 - hardness));
         return edge * (1.0 - t * t * (3.0 - 2.0 * t));
+    }
+
+    /// Fusion de deux couvertures : pinceau double et grain (même ordre que `DualBlendMode.allCases`).
+    static float combine(int mode, float p, float s) {
+        float r;
+        switch (mode) {
+            case 0: r = p * s; break;
+            case 1: r = min(p, s); break;
+            case 2: r = p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s); break;
+            case 3: r = s >= 1.0 ? (p > 0.0 ? 1.0 : 0.0) : p / (1.0 - s); break;
+            case 4: r = s <= 0.0 ? 0.0 : 1.0 - (1.0 - p) / s; break;
+            case 5: r = p + s - 1.0; break;
+            case 6: r = (p + s - 1.0) / 0.1; break;
+            default: r = p - s; break;
+        }
+        return clamp(r, 0.0, 1.0);
     }
 
     /// Couverture du dab au texel `gid` de sa zone (forme × grain) ; faux si le texel est hors du dab.
@@ -327,7 +346,7 @@ public final class BrushEngine {
             float gu = (px * dab.grain2.z + py * dab.grain2.w) * dab.grain.x + dab.grain2.x;
             float gv = (-px * dab.grain2.w + py * dab.grain2.z) * dab.grain.x + dab.grain2.y;
             float g = grain.sample(repeatSampler, float2(gu, gv)).r;
-            a *= 1.0 - dab.grain.y * (1.0 - g);
+            a = combine(int(dab.extra.x), a, 1.0 - dab.grain.y * (1.0 - g));
         } else if (dab.tip.w > 0.5) {
             // Grain fixé à la sphère : trois projections planes mélangées (poids |d|^4).
             float3 w = abs(d);
@@ -338,7 +357,7 @@ public final class BrushEngine {
             float g = w.x * grain.sample(repeatSampler, d.yz * s).r
                     + w.y * grain.sample(repeatSampler, d.xz * s).r
                     + w.z * grain.sample(repeatSampler, d.xy * s).r;
-            a *= 1.0 - dab.grain.y * (1.0 - g);
+            a = combine(int(dab.extra.x), a, 1.0 - dab.grain.y * (1.0 - g));
         }
         p = uint2(x, y);
         return a > 0.0;
@@ -399,22 +418,6 @@ public final class BrushEngine {
             m.y = max(m.y, o);
         }
         mask.write(m, p);
-    }
-
-    /// Combinaison du pinceau double (même ordre que `DualBlendMode.allCases`).
-    static float combine(int mode, float p, float s) {
-        float r;
-        switch (mode) {
-            case 0: r = p * s; break;
-            case 1: r = min(p, s); break;
-            case 2: r = p < 0.5 ? 2.0 * p * s : 1.0 - 2.0 * (1.0 - p) * (1.0 - s); break;
-            case 3: r = s >= 1.0 ? (p > 0.0 ? 1.0 : 0.0) : p / (1.0 - s); break;
-            case 4: r = s <= 0.0 ? 0.0 : 1.0 - (1.0 - p) / s; break;
-            case 5: r = p + s - 1.0; break;
-            case 6: r = (p + s - 1.0) / 0.1; break;
-            default: r = p - s; break;
-        }
-        return clamp(r, 0.0, 1.0);
     }
 
     /// Pose le trait : l'original d'avant le trait, avec la couleur à l'opacité du masque (voir `StrokeMask.composite`).

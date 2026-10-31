@@ -141,6 +141,9 @@ public enum ProcreateBrushImport {
         "dynamicsPressureOpacityTransfer", "dynamicsGlazedFlow", "renderingMaxTransfer", "renderingModulatedTransfer",
         "renderingRecursiveMixing", "dualBlendMode", "dualBlendModeExtended", "dynamicsPressureOverall", "dynamicsPressureSizeCurve",
         "dynamicsPressureOpacityCurve", "dynamicsPressureTransferModulationCurve",
+        "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
+        "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
+        "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter",
     ]
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
@@ -171,13 +174,17 @@ public enum ProcreateBrushImport {
         }
 
         if let text = string("name") { name = text }
+        // Propriétés > Taille maximale / minimale : les bornes du curseur de taille (pas la taille à pression nulle,
+        // qui vient de la pression et de sa courbe). Le pinceau commence à la taille maximale.
         if let size = number("maxSize") {
             settings.radiusDegrees = min(30, max(0.3, 0.3 + size * 6))
+            settings.maxSizeDegrees = settings.radiusDegrees
             mapped.append("taille max → rayon \(fmt(settings.radiusDegrees))°")
         }
+        settings.minimumSize = 0
         if let minimum = number("minSize") {
-            settings.minimumSize = min(1, max(0, minimum))
-            mapped.append("taille min → \(fmt(settings.minimumSize))")
+            settings.minSizeDegrees = min(settings.maxSizeDegrees, max(0.05, 0.3 + minimum * 6))
+            mapped.append("taille min du curseur → \(fmt(settings.minSizeDegrees))°")
         }
         if let opacity = number("maxOpacity") {
             settings.opacity = min(1, max(0.02, opacity))
@@ -238,7 +245,12 @@ public enum ProcreateBrushImport {
             settings.flow = min(1, max(0, flow))
             mapped.append("flux → \(pct(settings.flow))")
         }
-        settings.rendering = (brush["renderingMaxTransfer"] as? Bool) == true ? .intenseGlaze : .lightGlaze
+        // Mode de rendu : relevé sur Minke (Fusion uniforme = mélange récursif + transfert modulé) ; le reste est déduit.
+        let recursive = (brush["renderingRecursiveMixing"] as? Bool) == true
+        let maxTransfer = (brush["renderingMaxTransfer"] as? Bool) == true
+        let modulated = (brush["renderingModulatedTransfer"] as? Bool) == true
+        settings.rendering = recursive ? (maxTransfer ? .intenseBlending : .uniformBlending)
+            : (maxTransfer ? .intenseGlaze : (modulated ? .uniformGlaze : .lightGlaze))
         mapped.append("rendu → \(settings.rendering.label.lowercased())")
         // Courbes de pression : points « {x, y} » d'un ValkyrieMagnitudinalCurve.
         func curve(_ key: String) -> PressureCurve? {
@@ -286,9 +298,32 @@ public enum ProcreateBrushImport {
             settings.randomizeRotation = true
             mapped.append("angle de départ aléatoire")
         }
-        if let movement = number("textureMovement") {
+        // Comportement du grain : `textureApplication` 0 = mobile, 1 = texturé ; `textureMovement` = curseur Mouvement
+        // (0 = glisse avec le tampon, max = rouleau). Fichiers sans `textureApplication` : ancienne lecture.
+        let movement = number("textureMovement")
+        if let application = number("textureApplication") {
+            settings.grainMoving = application < 0.5
+        } else if let movement {
             settings.grainMoving = movement > 0.5
-            mapped.append("grain \(settings.grainMoving ? "mobile" : "texturé")")
+        }
+        if settings.grainMoving, let movement { settings.grainMovement = min(1, max(0, movement)) }
+        mapped.append("grain \(settings.grainMoving ? "mobile" : "texturé")"
+                      + (settings.grainMovement > 0 ? ", mouvement \(pct(settings.grainMovement))" : ""))
+        if let mode = number("grainBlendMode") {
+            settings.grainBlendMode = DualBlendMode(procreateCode: Int(mode))
+            mapped.append("fusion du grain → \(settings.grainBlendMode.label.lowercased())")
+        }
+        if let jitter = number("plotJitterLongitudinal"), jitter > 0 {
+            settings.longitudinalJitter = min(2, jitter)
+            mapped.append("variation linéaire → \(pct(jitter))")
+        }
+        if let speed = number("plotSpacingSpeed"), speed > 0 { settings.speedSpacing = min(1, speed) }
+        // Mélange humide : conservé tel quel (voir `BrushSettings`).
+        for (key, path) in [("dynamicsMix", \BrushSettings.wetDilution), ("dynamicsLoad", \BrushSettings.wetCharge),
+                            ("dynamicsPressureMix", \BrushSettings.wetAttack), ("dynamicsWetAccumulation", \BrushSettings.wetPull),
+                            ("dynamicsMixSoftening", \BrushSettings.wetGrade), ("dynamicsBlur", \BrushSettings.wetBlur),
+                            ("dynamicsBlurJitter", \BrushSettings.wetBlurJitter), ("dynamicsWetnessJitter", \BrushSettings.wetnessJitter)] {
+            if let v = number(key) { settings[keyPath: path] = min(1, max(0, v)) }
         }
         if let rotation = number("textureRotation"), rotation != 0 {
             settings.grainRotationDegrees = abs(rotation) <= 1 ? rotation * 180 : rotation
@@ -489,6 +524,7 @@ public enum NativeBrushFile {
         /// Pinceau secondaire d'un pinceau double (0 ou 1 élément).
         var secondary: [File]?
         var dualBlendMode: String?
+        var grainBlendMode: String?
     }
 
     public enum Failure: Error {
@@ -509,6 +545,9 @@ public enum NativeBrushFile {
         ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
         ("maxOpacity", \.maxOpacity), ("minOpacity", \.minOpacity),
         ("flow", \.flow), ("pressureFlowAmount", \.pressureFlowAmount), ("secondaryScale", \.secondaryScale),
+        ("longitudinalJitter", \.longitudinalJitter), ("speedSpacing", \.speedSpacing), ("grainMovement", \.grainMovement),
+        ("wetDilution", \.wetDilution), ("wetCharge", \.wetCharge), ("wetAttack", \.wetAttack), ("wetPull", \.wetPull),
+        ("wetGrade", \.wetGrade), ("wetBlur", \.wetBlur), ("wetBlurJitter", \.wetBlurJitter), ("wetnessJitter", \.wetnessJitter),
     ] }
 
     /// Courbes de pression, par nom (seules les courbes non linéaires sont écrites).
@@ -548,6 +587,7 @@ public enum NativeBrushFile {
                         opacityJitter: s.opacityJitter, rotationJitter: s.rotationJitter, randomFlip: s.randomFlip,
                         author: s.author, grainSource: encode(s.grainSource), values: values, flags: flags)
         file.rendering = s.rendering.rawValue
+        file.grainBlendMode = s.grainBlendMode == .multiply ? nil : s.grainBlendMode.rawValue
         file.curves = curves.isEmpty ? nil : curves
         if let secondary = s.secondary {
             file.secondary = [Self.file(secondary, name: secondary.name)]
@@ -580,6 +620,7 @@ public enum NativeBrushFile {
         for (key, path) in flagKeys { if let v = file.flags?[key] { s[keyPath: path] = v } }
         for (key, path) in curveKeys { if let c = file.curves?[key] { s[keyPath: path] = c } }
         if let raw = file.rendering, let rendering = BrushRendering(rawValue: raw) { s.rendering = rendering }
+        if let raw = file.grainBlendMode, let mode = DualBlendMode(rawValue: raw) { s.grainBlendMode = mode }
         if let secondary = file.secondary?.first {
             s.secondary = settings(secondary)
             if let raw = file.dualBlendMode, let mode = DualBlendMode(rawValue: raw) { s.dualBlendMode = mode }

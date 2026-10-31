@@ -92,7 +92,7 @@ struct FlatBrushPainter {
             return
         }
         while true {
-            let step = brush.spacing(radius: brush.radius(pressure: pressure), random: stream.random.next()) * pixelsPerRadian
+            let step = brush.spacing(radius: brush.radius(pressure: pressure), random: stream.random.next(), speed: speed) * pixelsPerRadian
             let remaining = simd_distance(from, point)
             guard remaining >= max(0.5, step) else { break }
             from += (point - from) / remaining * max(0.5, step)
@@ -153,7 +153,7 @@ struct FlatBrushPainter {
                         let s = 1 / (tip.grainScale * pixelsPerRadian)
                         g = grain.sample(Double(px) * s, Double(py) * s, wrap: true)
                     }
-                    a *= 1 - Float(tip.grainDepth) * (1 - g)
+                    a = tip.applyGrain(a, g)
                 }
                 StrokeMask.accumulate(&mask[py * width + px], coverage: a, opacity: dab.color.w, flow: dab.flow,
                                       secondary: dab.secondary)

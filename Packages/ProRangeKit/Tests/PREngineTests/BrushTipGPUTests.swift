@@ -29,6 +29,12 @@ final class BrushTipGPUTests: XCTestCase {
             SphericalDab(center: Equirect.direction(latitude: 0.4, longitude: -1.5), radius: 0.3, hardness: 1, color: [0.6, 0.9, 0.2, 1],
                          tip: DabTip(shape: shape, grain: grain, rotation: 0.3, grainScale: 0.08, grainDepth: 0.9, flipX: true,
                                      roundness: 0.5, grainMoving: true, grainRotation: 0.7, grainOffset: [0.3, 0.6])),
+            // Grain en densité linéaire + (le grain creuse la forme) et texturé en incrustation.
+            SphericalDab(center: Equirect.direction(latitude: -0.5, longitude: 2.2), radius: 0.3, hardness: 1, color: [0.9, 0.9, 0.2, 1],
+                         tip: DabTip(shape: shape, grain: grain, rotation: 1.1, grainScale: 0.1, grainDepth: 0.9,
+                                     grainMoving: true, grainOffset: [0.1, 0.2], grainBlend: .linearBurn)),
+            SphericalDab(center: Equirect.direction(latitude: 0.6, longitude: 1.2), radius: 0.25, hardness: 0.7, color: [0.3, 0.9, 0.9, 1],
+                         tip: DabTip(grain: grain, grainScale: 0.15, grainDepth: 0.7, grainBlend: .overlay)),
         ]
         let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
         desc.usage = [.shaderRead, .shaderWrite]

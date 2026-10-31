@@ -21,6 +21,8 @@ public struct BrushSettings: Equatable, Sendable {
     public var spacingJitter: Double = 0
     /// Dispersion latérale, en fraction du diamètre, de part et d'autre du trait.
     public var scatter: Double = 0
+    /// Variation linéaire : décalage le long du trait, en fraction du diamètre, en avant ou en arrière.
+    public var longitudinalJitter: Double = 0
 
     // MARK: Stabilisation (voir `StrokeStabilizer`), chacune dans [0, 1]
     public var streamLine: Double = 0
@@ -79,6 +81,20 @@ public struct BrushSettings: Equatable, Sendable {
     public var grainContrast: Double = 0
     public var grainBrightness: Double = 0
     public var grainInverted = false
+    /// Mode de fusion du grain avec la forme (produit = classique ; densité linéaire + = le grain creuse la forme).
+    public var grainBlendMode: DualBlendMode = .multiply
+    /// Grain mobile : 0 = collé à chaque tampon (glisse), 1 = rouleau (il défile le long du trait, comme fixé au papier).
+    public var grainMovement: Double = 0
+
+    // MARK: Mélange humide (réglages conservés ; voir DECISIONS)
+    public var wetDilution: Double = 0
+    public var wetCharge: Double = 1
+    public var wetAttack: Double = 0
+    public var wetPull: Double = 0
+    public var wetGrade: Double = 0
+    public var wetBlur: Double = 0
+    public var wetBlurJitter: Double = 0
+    public var wetnessJitter: Double = 0
 
     // MARK: Rendu (voir `BrushRendering` et `StrokeMask`)
     public var rendering: BrushRendering = .lightGlaze
@@ -116,6 +132,8 @@ public struct BrushSettings: Equatable, Sendable {
     /// Taille et opacité réduites (ou augmentées si négatif) quand le trait va vite.
     public var speedSize: Double = 0
     public var speedOpacity: Double = 0
+    /// Espacement augmenté quand le trait va vite.
+    public var speedSpacing: Double = 0
     /// Taille : jusqu'à cette fraction en moins, au hasard.
     public var sizeJitter: Double = 0
     /// Opacité : jusqu'à cette fraction en moins, au hasard.
@@ -151,7 +169,7 @@ public struct BrushSettings: Equatable, Sendable {
     public var minOpacity: Double = 0.02
 
     public var hasJitter: Bool {
-        spacingJitter > 0 || scatter > 0 || sizeJitter > 0 || opacityJitter > 0 || rotationJitter > 0 || randomFlip
+        spacingJitter > 0 || scatter > 0 || longitudinalJitter > 0 || sizeJitter > 0 || opacityJitter > 0 || rotationJitter > 0 || randomFlip
             || stampCountJitter > 0 || grainDepthJitter > 0
     }
 
@@ -240,12 +258,18 @@ public struct BrushSettings: Equatable, Sendable {
         let size = max(radiusDegrees * .pi / 180 * sizeScale, 1e-5)
         let alpha = min(1, max(0, opacity * alphaScale))
         var position = center
+        // Décalages dans le plan tangent : en travers du trait (dispersion latérale) et le long (variation linéaire).
+        var shift = SIMD2<Double>.zero
         if scatter > 0 {
-            // Décalage perpendiculaire au trait, dans le plan tangent.
             let offset = scatter * 2 * size * (random.scatter * 2 - 1)
             let across = strokeAngle + .pi / 2
-            position = TangentFrame(center: center).unproject([cos(across) * offset, sin(across) * offset])
+            shift += [cos(across) * offset, sin(across) * offset]
         }
+        if longitudinalJitter > 0 {
+            let offset = longitudinalJitter * 2 * size * (random.along * 2 - 1)
+            shift += [cos(strokeAngle) * offset, sin(strokeAngle) * offset]
+        }
+        if shift != .zero { position = TangentFrame(center: center).unproject(shift) }
         var tip: DabTip?
         if shape != nil || grain != nil {
             var rotation = shapeRotationDegrees * .pi / 180 + (followStroke ? strokeAngle : 0) + rotationJitter * (random.rotation * 2 - 1)
@@ -256,11 +280,20 @@ public struct BrushSettings: Equatable, Sendable {
                 depth = grainDepthMinimum + (depth - grainDepthMinimum) * p
             }
             depth *= 1 - min(1, max(0, grainDepthJitter)) * random.depth
-            tip = DabTip(shape: shape, grain: grain, rotation: rotation,
-                         grainScale: max(0.05, grainScaleDegrees) * .pi / 180, grainDepth: depth,
+            let grainScale = max(0.05, grainScaleDegrees) * .pi / 180
+            let grainRotation = grainRotationDegrees * .pi / 180
+            var grainOffset = grainOffsetJitter ? context.grainOffset : .zero
+            if grainMoving, grainMovement > 0, context.distance.isFinite {
+                // Rouleau : le grain avance avec le trait, dans le repère du grain (tourné comme lui), en motifs.
+                let travel = min(1, grainMovement) * context.distance / grainScale
+                let dx = cos(strokeAngle), dy = sin(strokeAngle)
+                let c = cos(grainRotation), s = sin(grainRotation)
+                grainOffset += [(dx * c + dy * s) * travel, (-dx * s + dy * c) * travel]
+            }
+            tip = DabTip(shape: shape, grain: grain, rotation: rotation, grainScale: grainScale, grainDepth: depth,
                          flipX: randomFlip && random.flip, roundness: min(1, max(0.05, shapeRoundness)),
-                         grainMoving: grainMoving, grainRotation: grainRotationDegrees * .pi / 180,
-                         grainOffset: grainOffsetJitter ? context.grainOffset : .zero)
+                         grainMoving: grainMoving, grainRotation: grainRotation, grainOffset: grainOffset,
+                         grainBlend: grainBlendMode)
         }
         var dab = SphericalDab(center: position, radius: size, hardness: hardness,
                                color: SIMD4<Float>(color.x, color.y, color.z, Float(alpha)), mode: mode, tip: tip)
@@ -268,9 +301,11 @@ public struct BrushSettings: Equatable, Sendable {
         return dab
     }
 
-    /// Espacement du prochain dab, avec sa variation.
-    public func spacing(radius: Double, random: Double) -> Double {
-        max(radius * spacing * (1 + min(1, max(0, spacingJitter)) * (random * 2 - 1)), 1e-4)
+    /// Espacement du prochain dab, avec sa variation ; `speed` (radians par seconde) l'augmente selon `speedSpacing`.
+    public func spacing(radius: Double, random: Double, speed: Double = 0) -> Double {
+        let fast = min(1, speed / 3)
+        let base = radius * spacing * (1 + min(1, max(0, spacingJitter)) * (random * 2 - 1))
+        return max(base * (1 + max(0, speedSpacing) * fast), 1e-4)
     }
 
     /// Recalcule le grain utilisé à partir de l'image importée et des réglages de contraste, luminosité, inversion.
@@ -331,6 +366,8 @@ public struct DabRandom: Sendable, Equatable {
     public var flip: Bool
     /// Variation de la profondeur du grain.
     public var depth: Double = 0
+    /// Variation linéaire (centrée sur 0,5).
+    public var along: Double = 0.5
 
     public init(size: Double, opacity: Double, rotation: Double, scatter: Double, flip: Bool) {
         self.size = size
@@ -362,6 +399,7 @@ public struct StrokeRandom: Sendable {
     public mutating func dab() -> DabRandom {
         var random = DabRandom(size: next(), opacity: next(), rotation: next(), scatter: next(), flip: next() < 0.5)
         random.depth = next()
+        random.along = next()
         return random
     }
 }
