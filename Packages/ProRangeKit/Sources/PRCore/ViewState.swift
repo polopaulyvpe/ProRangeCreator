@@ -130,11 +130,12 @@ public struct ViewState: Sendable, Equatable {
     public var yaw = 0.0
     /// Positif vers le haut.
     public var pitch = 0.0
-    public var roll = 0.0
     /// Champ de vision vertical.
     public var fov = 90 * Double.pi / 180
-    /// Horizon verrouillé : le geste de rotation ne fait pas rouler la caméra (actif par défaut en vue sphère).
-    public var horizonLocked = true
+    /// Roulis de la vue (sphère et fenêtre plane) : la toile tourne autour du centre de l'écran, comme dans Procreate.
+    public var roll = 0.0
+    /// Horizon verrouillé : le geste de rotation ne fait pas rouler la caméra (désactivé par défaut).
+    public var horizonLocked = false
 
     // Fenêtre plane
     public var face: CubeFace = .front
@@ -166,7 +167,7 @@ public struct ViewState: Sendable, Equatable {
     public func parameters(aspect: Double) -> ProjectionParameters {
         let flat = mode == .flat
         return ProjectionParameters(
-            rotation: flat ? Self.rotation(yaw: face.yaw, pitch: face.pitch, roll: 0) : Self.rotation(yaw: yaw, pitch: pitch, roll: roll),
+            rotation: flat ? Self.rotation(yaw: face.yaw, pitch: face.pitch, roll: roll) : Self.rotation(yaw: yaw, pitch: pitch, roll: roll),
             tanHalfFov: tan((flat ? flatFov : fov) / 2),
             aspect: aspect,
             shift: flat ? flatShift : .zero,
@@ -185,9 +186,12 @@ public struct ViewState: Sendable, Equatable {
     public mutating func pan(byNDC delta: SIMD2<Double>, aspect: Double) {
         switch mode {
         case .sphere:
+            // Glissé dans le plan image, ramené dans le repère sans roulis : le contenu suit les doigts même vue tournée.
             let t = tan(fov / 2)
-            yaw -= atan(delta.x * aspect * t)
-            pitch = min(Self.maxPitch, max(-Self.maxPitch, pitch - atan(delta.y * t)))
+            let u = SIMD2<Double>(delta.x * aspect * t, delta.y * t)
+            let c = cos(roll), s = sin(roll)
+            yaw -= atan(u.x * c - u.y * s)
+            pitch = min(Self.maxPitch, max(-Self.maxPitch, pitch - atan(u.x * s + u.y * c)))
         case .unfolded:
             unfoldedCenter.x -= delta.x * aspect * unfoldedSpan / 4
             unfoldedCenter.x -= floor(unfoldedCenter.x)
@@ -208,14 +212,23 @@ public struct ViewState: Sendable, Equatable {
         }
     }
 
-    /// Tourner à deux doigts : roulis en vue sphère, sauf si l'horizon est verrouillé.
+    /// Tourner à deux doigts : roulis en vue sphère et en fenêtre plane, sauf si l'horizon est verrouillé.
     public mutating func rotate(by angle: Double) {
-        guard mode == .sphere, !horizonLocked else { return }
+        guard mode != .unfolded, !horizonLocked else { return }
         roll += angle
+    }
+
+    /// Angle droit le plus proche (0°, 90°, 180°, 270°) si le roulis en est à moins de `tolerance` : l'aimant au relâcher.
+    /// Le résultat reste du même tour que `roll`, pour que l'animation prenne le chemin le plus court.
+    public static func snappedRoll(_ roll: Double, tolerance: Double = 7 * .pi / 180) -> Double? {
+        let quarter = Double.pi / 2
+        let target = (roll / quarter).rounded() * quarter
+        return abs(roll - target) <= tolerance ? target : nil
     }
 
     /// Prépare le dépliage : la vue à plat est centrée sur la direction regardée.
     public mutating func prepareUnfold() {
+        roll = 0
         unfoldedCenter = [yaw / (2 * .pi) + 0.5 - floor(yaw / (2 * .pi) + 0.5), 0.5 - pitch / .pi]
         unfoldedSpan = 1
     }
@@ -231,6 +244,7 @@ public struct ViewState: Sendable, Equatable {
         mode = .flat
         self.face = face
         flatShift = .zero
+        roll = 0
     }
 
     private static func clamp(_ v: Double, _ range: ClosedRange<Double>) -> Double {

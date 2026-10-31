@@ -109,7 +109,7 @@ final class CanvasSession {
     @ObservationIgnored var view = ViewState()
 
     private(set) var mode: ViewMode = .sphere
-    private(set) var horizonLocked = true
+    private(set) var horizonLocked = false
     private(set) var fovDegrees = 90.0
     private(set) var canUndo = false
     private(set) var canRedo = false
@@ -208,6 +208,7 @@ final class CanvasSession {
     @ObservationIgnored private var secondaryRandom = StrokeRandom(seed: 2)
     @ObservationIgnored var previousSecondaryCenter: Vec3?
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
+    @ObservationIgnored private var rollAnimation: (from: Double, to: Double, start: CFTimeInterval)?
 
     var settings: BrushSettings {
         get { tool == .brush ? brush : eraser }
@@ -265,13 +266,37 @@ final class CanvasSession {
         canvas?.blendSpace = space
     }
 
-    /// Avance l'animation de dépliage (appelé à chaque image).
+    /// Avance les animations de dépliage et de roulis (appelé à chaque image).
     func advance(now: CFTimeInterval) {
+        if let anim = rollAnimation {
+            let t = min(1, (now - anim.start) / 0.2)
+            let eased = t * t * (3 - 2 * t)
+            view.roll = anim.from + (anim.to - anim.from) * eased
+            if t >= 1 { rollAnimation = nil }
+        }
         guard let anim = morphAnimation else { return }
         let t = min(1, (now - anim.start) / Self.morphDuration)
         let eased = t * t * (3 - 2 * t)
         view.morph = anim.from + (anim.to - anim.from) * eased
         if t >= 1 { morphAnimation = nil }
+    }
+
+    /// Le geste de rotation commence : une animation de calage en cours s'arrête là.
+    func rotationBegan() {
+        rollAnimation = nil
+    }
+
+    /// Fin du geste de rotation : près d'un angle droit, la vue s'y cale (aimant).
+    func rotationEnded() {
+        guard let target = ViewState.snappedRoll(view.roll) else { return }
+        rollAnimation = (view.roll, target, CACurrentMediaTime())
+    }
+
+    /// Remet l'horizon droit (menu de la vue), par le plus court chemin.
+    func straightenView() {
+        let turn = 2 * Double.pi
+        let target = (view.roll / turn).rounded() * turn
+        rollAnimation = (view.roll, target, CACurrentMediaTime())
     }
 
     private func animateMorph(to target: Double) {
@@ -780,8 +805,10 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     @objc func handleRotation(_ gesture: UIRotationGestureRecognizer) {
         trackNavigation(gesture)
+        if gesture.state == .began { session.rotationBegan() }
         session.view.rotate(by: Double(gesture.rotation))
         gesture.rotation = 0
+        if gesture.state == .ended || gesture.state == .cancelled { session.rotationEnded() }
     }
 
     /// Grille visible pendant les gestes de navigation : sur une toile vide, c'est elle qui montre que la vue tourne.
@@ -1052,7 +1079,7 @@ struct CanvasToolbar: View {
                         }
                     }
                 }
-                if session.mode == .sphere {
+                if session.mode != .unfolded {
                     Toggle("Horizon verrouillé", isOn: Binding(get: { session.horizonLocked },
                                                               set: { session.setHorizonLocked($0) }))
                         .fixedSize()

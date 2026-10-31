@@ -100,10 +100,43 @@ final class ViewStateTests: XCTestCase {
         XCTAssertGreaterThan(view.pitch, -.pi / 2, "le tangage reste borné")
 
         view.rotate(by: 0.3)
-        XCTAssertEqual(view.roll, 0, "horizon verrouillé par défaut")
-        view.horizonLocked = false
+        XCTAssertEqual(view.roll, 0.3, "rotation libre par défaut")
+        view.horizonLocked = true
         view.rotate(by: 0.3)
-        XCTAssertEqual(view.roll, 0.3)
+        XCTAssertEqual(view.roll, 0.3, "horizon verrouillé : pas de roulis")
+
+        // Vue tournée d'un demi-tour : le contenu suit toujours les doigts, donc le lacet part dans l'autre sens.
+        var upsideDown = ViewState()
+        upsideDown.rotate(by: .pi)
+        upsideDown.pan(byNDC: [0.2, 0], aspect: 1)
+        XCTAssertGreaterThan(upsideDown.yaw, 0)
+        // Un quart de tour : glisser horizontalement fait changer le tangage, plus le lacet.
+        var quarter = ViewState()
+        quarter.rotate(by: .pi / 2)
+        quarter.pan(byNDC: [0.2, 0], aspect: 1)
+        XCTAssertEqual(quarter.yaw, 0, accuracy: 1e-9)
+        XCTAssertNotEqual(quarter.pitch, 0)
+        // Le point sous le doigt reste sous le doigt (petit glissé, vue tournée de 40°).
+        var tilted = ViewState()
+        tilted.rotate(by: 0.7)
+        let finger = SIMD2<Double>(0.1, 0.05)
+        let before = try! XCTUnwrap(tilted.direction(atNDC: [0, 0], aspect: 1))
+        tilted.pan(byNDC: finger, aspect: 1)
+        assertClose(try! XCTUnwrap(tilted.direction(atNDC: finger, aspect: 1)), before, tolerance: 0.01)
+
+        // Aimant : près d'un angle droit seulement.
+        XCTAssertEqual(ViewState.snappedRoll(0.05), 0)
+        XCTAssertEqual(ViewState.snappedRoll(.pi / 2 - 0.08)!, .pi / 2, accuracy: 1e-12)
+        XCTAssertNil(ViewState.snappedRoll(0.5))
+        XCTAssertEqual(ViewState.snappedRoll(2 * .pi + 0.02)!, 2 * .pi, accuracy: 1e-12, "même tour : chemin le plus court")
+
+        // Fenêtre plane : elle tourne aussi ; une nouvelle face repart droite.
+        var flat = ViewState()
+        flat.showFace(.front)
+        flat.rotate(by: 0.4)
+        XCTAssertEqual(flat.roll, 0.4)
+        flat.showFace(.left)
+        XCTAssertEqual(flat.roll, 0)
 
         view.mode = .unfolded
         view.unfoldedCenter = [0.02, 0.5]
@@ -111,7 +144,7 @@ final class ViewStateTests: XCTestCase {
         XCTAssertTrue((0..<1).contains(view.unfoldedCenter.x), "le centre boucle sur la couture")
     }
 
-    private func assertClose(_ a: Vec3, _ b: Vec3, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertLessThan(simd_length(a - b), 1e-9, "\(a) ≠ \(b)", file: file, line: line)
+    private func assertClose(_ a: Vec3, _ b: Vec3, tolerance: Double = 1e-9, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertLessThan(simd_length(a - b), tolerance, "\(a) ≠ \(b)", file: file, line: line)
     }
 }

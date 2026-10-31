@@ -167,7 +167,8 @@ struct ViewModeControl: View {
                         ForEach(CubeFace.allCases, id: \.self) { face in Button(face.label) { session.showFace(face) } }
                     }
                 }
-                if session.mode == .sphere {
+                if session.mode != .unfolded {
+                    Button("Redresser la vue", systemImage: "level") { session.straightenView() }
                     Toggle("Horizon verrouillé", isOn: Binding(get: { session.horizonLocked }, set: { session.setHorizonLocked($0) }))
                 }
             } label: {
