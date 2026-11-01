@@ -63,4 +63,5 @@ jobs:
         with:
           name: ProRangeCreator-ipa
           path: ProRangeCreator.ipa
-          retention-days: 14
+          # Dépôt public : l'.ipa ne reste téléchargeable qu'un jour (le temps de le récupérer).
+          retention-days: 1
