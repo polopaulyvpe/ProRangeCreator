@@ -125,9 +125,11 @@ public final class BrushEngine {
         var grain: BrushTexture?
     }
 
-    private func prepare(_ dab: SphericalDab, width: Int, height: Int, space: BlendSpace, alphaLock: Bool) -> Prepared {
+    private func prepare(_ input: SphericalDab, width: Int, height: Int, space: BlendSpace, alphaLock: Bool) -> Prepared {
         let pixelAngle = Double.pi / Double(height)
-        let evaluator = DabEvaluator(dab, pixelAngle: pixelAngle)
+        let evaluator = DabEvaluator(input, pixelAngle: pixelAngle)
+        // Le dab tel que rendu (agrandi s'il est plus petit qu'un texel), comme sur le CPU.
+        let dab = evaluator.dab
         let span = EquirectSpan(center: evaluator.frame.center, radius: evaluator.reach, width: width, height: height)
         let c = evaluator.frame.center
         let center = SIMD4<Float>(Float(c.x), Float(c.y), Float(c.z), Float(dab.radius))
@@ -244,6 +246,25 @@ public final class BrushEngine {
         encoder.dispatchThreadgroups(MTLSize(width: side / 16, height: side / 16, depth: coords.count), threadsPerThreadgroup: group)
         encoder.endEncoding()
         return touched
+    }
+
+    /// Remet les tuiles d'un trait dans leur état d'avant le trait (copie `original` → `layer`) et vide leur masque :
+    /// le trait peut ensuite être repeint autrement (effilement de fin appliqué au lever).
+    public func resetStroke(tiles: Set<TileCoord>, layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture,
+                            commandBuffer: any MTLCommandBuffer) {
+        guard !tiles.isEmpty, let blit = commandBuffer.makeBlitCommandEncoder() else { return }
+        let side = TileSize.side
+        for coord in tiles {
+            let x = coord.x * side, y = coord.y * side
+            guard x < layer.width, y < layer.height else { continue }
+            let size = MTLSize(width: min(side, layer.width - x), height: min(side, layer.height - y), depth: 1)
+            let origin = MTLOrigin(x: x, y: y, z: 0)
+            blit.copy(from: original, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
+                      to: layer, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+            blit.copy(from: zeroTile, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0), sourceSize: size,
+                      to: mask, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+        }
+        blit.endEncoding()
     }
 
     static let source = """

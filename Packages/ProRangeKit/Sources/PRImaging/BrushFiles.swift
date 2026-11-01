@@ -134,6 +134,7 @@ public enum ProcreateBrushImport {
         "shapeAngle", "shapeRotation", "dynamicsPressureSize", "dynamicsPressureOpacity", "textureScale",
         "grainDepth", "textureDepth", "bundledShapePath", "bundledGrainPath",
         "pencilTaperStartLength", "taperStartLength", "pencilTaperSize", "taperSize", "pencilTaperOpacity", "taperOpacity",
+        "pencilTaperEndLength", "taperEndLength",
         "shapeRoundness", "shapeCount", "shapeCountJitter", "shapeRandomise", "textureMovement", "textureRotation",
         "grainDepthMinimum", "grainDepthJitter", "textureOffsetJitter", "textureContrast", "textureBrightness", "textureInverted",
         "dynamicsSpeedSize", "dynamicsSpeedOpacity", "dynamicsTiltOpacity", "dynamicsTiltSize", "dynamicsTiltAngle", "minOpacity",
@@ -279,7 +280,12 @@ public enum ProcreateBrushImport {
         if let mode = number("dualBlendMode") { settings.dualBlendMode = DualBlendMode(procreateCode: Int(mode)) }
         // Effilement : celui du Pencil s'il est réglé, sinon celui du doigt ; longueur 0…1 → 0…10 diamètres.
         let taperLength = [number("pencilTaperStartLength"), number("taperStartLength")].compactMap { $0 }.first { $0 > 0 } ?? 0
-        if taperLength > 0 {
+        let taperEnd = [number("pencilTaperEndLength"), number("taperEndLength")].compactMap { $0 }.first { $0 > 0 } ?? 0
+        if taperEnd > 0 {
+            settings.taperEndLength = taperEnd * 10
+            mapped.append("effilement de fin → \(fmt(settings.taperEndLength)) diamètres")
+        }
+        if taperLength > 0 || taperEnd > 0 {
             settings.taperStartLength = taperLength * 10
             settings.taperSize = min(1, max(0, number("pencilTaperSize") ?? number("taperSize") ?? 1))
             settings.taperOpacity = min(1, max(0, number("pencilTaperOpacity") ?? number("taperOpacity") ?? 0))
@@ -545,6 +551,7 @@ public enum NativeBrushFile {
         ("streamLine", \.streamLine), ("stabilization", \.stabilization), ("motionFiltering", \.motionFiltering),
         ("pressureSmoothing", \.pressureSmoothing),
         ("taperStartLength", \.taperStartLength), ("taperSize", \.taperSize), ("taperOpacity", \.taperOpacity),
+        ("taperEndLength", \.taperEndLength),
         ("shapeRoundness", \.shapeRoundness), ("stampCountJitter", \.stampCountJitter),
         ("grainRotationDegrees", \.grainRotationDegrees), ("grainDepthMinimum", \.grainDepthMinimum),
         ("grainDepthJitter", \.grainDepthJitter), ("grainContrast", \.grainContrast), ("grainBrightness", \.grainBrightness),

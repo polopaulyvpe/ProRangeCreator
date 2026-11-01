@@ -18,13 +18,17 @@ struct FlatBrushPainter {
     var settings: BrushSettings
     let pixelsPerRadian: Double
 
-    /// Pose des dabs d'un pinceau (principal ou secondaire) le long du trait.
+    /// Pose des dabs d'un pinceau (principal ou secondaire) le long de la courbe du trait (même spline que la toile).
     private struct Stream {
         var random = StrokeRandom(seed: 1)
-        var lastDab: SIMD2<Double>?
+        var path = SplineStrokeSampler(onSphere: false)
+        var started = false
         var previousDab: SIMD2<Double>?
         var distance = 0.0
     }
+
+    /// Dabs du trait en cours (position, distance au départ) : l'effilement de fin les reprend au lever.
+    private var records: [(dab: SphericalDab, at: SIMD2<Double>, distance: Double)] = []
 
     private var primary = Stream()
     private var secondary = Stream()
@@ -64,6 +68,62 @@ struct FlatBrushPainter {
         rotationOffset = primary.random.next() * 2 * .pi
         speed = 0
         lastPoint = nil
+        records = []
+    }
+
+    /// Lever : dernier segment de la courbe, puis effilement de fin (le masque du trait est refait avec les dabs affinés).
+    mutating func finish() {
+        var stream = primary
+        flush(&stream, brush: settings, isSecondary: false)
+        primary = stream
+        if let second = settings.resolvedSecondary {
+            stream = secondary
+            flush(&stream, brush: second, isSecondary: true)
+            secondary = stream
+        }
+        let secondBrush = settings.resolvedSecondary
+        guard settings.taperEndLength > 0 || (secondBrush?.taperEndLength ?? 0) > 0, !records.isEmpty else { return }
+        let total = primary.distance
+        let redo = records
+        mask = [SIMD4<Float>](repeating: .zero, count: width * height)
+        for record in redo {
+            var dab = record.dab
+            let taper = (dab.secondary ? secondBrush ?? settings : settings).endTaper(remaining: total - record.distance)
+            dab.radius = max(1e-6, dab.radius * taper.size)
+            dab.color.w *= Float(taper.opacity)
+            stamp(dab, at: record.at)
+        }
+    }
+
+    private mutating func flush(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool) {
+        let spacing = spacingFunction(brush, stream.random)
+        let samples = stream.path.finish(spacing: spacing.next)
+        stream.random = spacing.random
+        for s in samples { stampAll(&stream, brush: brush, isSecondary: isSecondary, at: s) }
+    }
+
+    /// Espacement en pixels pour une pression, avec ses tirages (copiés puis rendus : la courbe les consomme dans l'ordre).
+    private func spacingFunction(_ brush: BrushSettings, _ random: StrokeRandom) -> SpacingDraw {
+        SpacingDraw(brush: brush, random: random, speed: speed, pixelsPerRadian: pixelsPerRadian)
+    }
+
+    /// Tirages d'espacement consommés par la courbe pendant un ajout de point.
+    private final class SpacingDraw {
+        let brush: BrushSettings
+        var random: StrokeRandom
+        let speed: Double
+        let pixelsPerRadian: Double
+
+        init(brush: BrushSettings, random: StrokeRandom, speed: Double, pixelsPerRadian: Double) {
+            self.brush = brush
+            self.random = random
+            self.speed = speed
+            self.pixelsPerRadian = pixelsPerRadian
+        }
+
+        func next(_ pressure: Double) -> Double {
+            max(0.5, brush.spacing(radius: brush.radius(pressure: pressure), random: random.next(), speed: speed) * pixelsPerRadian)
+        }
     }
 
     /// Ajoute un point du trait (pixels de l'image) : des dabs sont posés à l'espacement du pinceau depuis le précédent.
@@ -86,24 +146,24 @@ struct FlatBrushPainter {
 
     private mutating func advance(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool, to point: SIMD2<Double>,
                                   pressure: Double, tilt: Double) {
-        guard var from = stream.lastDab else {
-            stream.lastDab = point
-            stampAll(&stream, brush: brush, isSecondary: isSecondary, at: point, pressure: pressure, tilt: tilt)
-            return
+        let sample = StrokeSample(point: [point.x, point.y, 0], pressure: pressure, tilt: tilt)
+        let samples: [StrokeSample]
+        if stream.started {
+            let spacing = spacingFunction(brush, stream.random)
+            samples = stream.path.add(sample, spacing: spacing.next)
+            stream.random = spacing.random
+        } else {
+            stream.started = true
+            samples = stream.path.begin(sample)
         }
-        while true {
-            let step = brush.spacing(radius: brush.radius(pressure: pressure), random: stream.random.next(), speed: speed) * pixelsPerRadian
-            let remaining = simd_distance(from, point)
-            guard remaining >= max(0.5, step) else { break }
-            from += (point - from) / remaining * max(0.5, step)
-            stampAll(&stream, brush: brush, isSecondary: isSecondary, at: from, pressure: pressure, tilt: tilt)
-        }
-        stream.lastDab = from
+        for s in samples { stampAll(&stream, brush: brush, isSecondary: isSecondary, at: s) }
     }
 
     /// Les tampons d'un dab (Forme > Nombre), avec leurs tirages.
-    private mutating func stampAll(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool, at point: SIMD2<Double>,
-                                   pressure: Double, tilt: Double) {
+    private mutating func stampAll(_ stream: inout Stream, brush: BrushSettings, isSecondary: Bool, at sample: StrokeSample) {
+        let point = SIMD2<Double>(sample.point.x, sample.point.y)
+        let pressure = sample.pressure
+        let tilt = sample.tilt
         if let previous = stream.previousDab { stream.distance += simd_distance(previous, point) / pixelsPerRadian }
         var angle = 0.0
         if let previous = stream.previousDab, simd_distance(previous, point) > 1e-6 {
@@ -120,11 +180,15 @@ struct FlatBrushPainter {
             dab.secondary = isSecondary
             // Dispersion : décalage du centre dans le plan tangent, ramené en pixels (y de l'image vers le bas).
             let offset = TangentFrame(center: Self.origin).project(dab.center) * pixelsPerRadian
-            stamp(dab, at: point + SIMD2(offset.x, -offset.y))
+            let at = point + SIMD2(offset.x, -offset.y)
+            records.append((dab, at, stream.distance))
+            stamp(dab, at: at)
         }
     }
 
-    private mutating func stamp(_ dab: SphericalDab, at center: SIMD2<Double>) {
+    private mutating func stamp(_ input: SphericalDab, at center: SIMD2<Double>) {
+        // Plus petit qu'un pixel : agrandi, opacité réduite d'autant (comme sur la toile).
+        let dab = input.resolved(pixelAngle: 1 / pixelsPerRadian)
         let radiusPixels = max(0.75, dab.radius * pixelsPerRadian)
         let tip = dab.tip
         let reach = tip?.shape != nil ? radiusPixels * 1.42 : radiusPixels + 1
@@ -200,6 +264,7 @@ struct FlatBrushPainter {
             let y = Double(height) / 2 + sin(t * 2 * .pi) * Double(height) * 0.18
             painter.addPoint([x, y], pressure: 0.35 + 0.65 * sin(t * .pi), time: t * 0.6)
         }
+        painter.finish()
         return painter.image()
     }
 }

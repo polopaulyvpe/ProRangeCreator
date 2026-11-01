@@ -42,6 +42,17 @@ public struct BrushSettings: Equatable, Sendable {
     public var taperSize: Double = 0
     /// Réduction d'opacité tout au début du trait, dans [0, 1].
     public var taperOpacity: Double = 0
+    /// Effilement de fin de trait, en diamètres (0 = aucun) : appliqué au lever du stylet, le trait est alors repeint
+    /// avec sa fin affinée (même taille et opacité que le début).
+    public var taperEndLength: Double = 0
+
+    /// Facteurs de taille et d'opacité de l'effilement de fin pour un dab à `remaining` radians de la fin du trait.
+    public func endTaper(remaining: Double) -> (size: Double, opacity: Double) {
+        guard taperEndLength > 0 else { return (1, 1) }
+        let length = taperEndLength * 2 * radiusDegrees * .pi / 180
+        let t = min(1, max(0, remaining) / max(length, 1e-9))
+        return (1 - min(1, max(0, taperSize)) * (1 - t), 1 - min(1, max(0, taperOpacity)) * (1 - t))
+    }
 
     // MARK: Forme
     /// Forme du dab (nil = rond, avec la dureté).

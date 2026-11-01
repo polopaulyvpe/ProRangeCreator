@@ -157,6 +157,31 @@ public final class StackCanvas {
         }
     }
 
+    /// Repeint tout le trait à masque en cours avec ces dabs (effilement de fin calculé au lever) : les tuiles touchées
+    /// reviennent à leur état d'avant le trait, le masque est vidé, puis les dabs sont reposés.
+    public func replaceStroke(with dabs: [SphericalDab]) {
+        guard stroking, let target = strokeLayer, let style = strokeStyle else { return }
+        let lock = !paintingMask && stack.item(activeID)?.alphaLock == true
+        if usesFastPath {
+            guard let brush, let active, let queue, let mask = strokeMaskTexture, let original = strokeOriginalTexture,
+                  let commands = queue.makeCommandBuffer() else { return }
+            flushPending(into: commands)
+            brush.resetStroke(tiles: strokeTiles, layer: active.texture, original: original, mask: mask, commandBuffer: commands)
+            strokeTiles.formUnion(brush.encodeStroke(dabs, style: style, space: blendSpace, alphaLock: lock, layer: active.texture,
+                                                     original: original, mask: mask, known: strokeTiles, commandBuffer: commands))
+            commands.commit()
+            lastCommands = commands
+            active.markChanged()
+        } else if let buffer = strokeBuffer {
+            compositeDirty.formUnion(target.resetStroke(buffer))
+            let limit: ((TileCoord) -> [Float]?)? = selection.map { mask in { mask.tileValues($0) } }
+            for dab in dabs {
+                compositeDirty.formUnion(target.stamp(dab, into: buffer, style: style, space: blendSpace, alphaLock: lock,
+                                                      selection: limit))
+            }
+        }
+    }
+
     /// Modification libre du calque cible pendant un trait sur le chemin CPU (doigt, clonage) : `body` renvoie les tuiles touchées.
     /// Avec une sélection, le résultat y est limité.
     public func edit(_ body: (TiledLayer) -> Set<TileCoord>) {

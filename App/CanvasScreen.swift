@@ -204,8 +204,12 @@ final class CanvasSession {
 
     @ObservationIgnored private var sampler = SphericalStrokeSampler()
     /// Pinceau double : le secondaire a son propre espacement, ses propres tirages.
-    @ObservationIgnored private var secondarySampler = SphericalStrokeSampler()
     @ObservationIgnored private var secondaryRandom = StrokeRandom(seed: 2)
+    /// Pinceau et gomme : dabs posés le long d'une courbe lisse (pression et inclinaison interpolées dab par dab).
+    @ObservationIgnored private var brushPath = SplineStrokeSampler()
+    @ObservationIgnored private var secondaryPath = SplineStrokeSampler()
+    /// Dabs du trait à masque avec leur distance au départ : l'effilement de fin les reprend au lever.
+    @ObservationIgnored private var strokeRecords: [(dab: SphericalDab, distance: Double)] = []
     @ObservationIgnored var previousSecondaryCenter: Vec3?
     @ObservationIgnored private var morphAnimation: (from: Double, to: Double, start: CFTimeInterval)?
     @ObservationIgnored private var rollAnimation: (from: Double, to: Double, start: CFTimeInterval)?
@@ -369,7 +373,10 @@ final class CanvasSession {
         strokeRotationOffset = strokeRandom.next() * 2 * .pi
         secondaryRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
         previousSecondaryCenter = nil
-        let secondaryCenters = secondarySampler.begin(at: d)
+        strokeRecords = []
+        let first = StrokeSample(point: d, pressure: pressure, tilt: tilt)
+        let firstDabs = brushPath.begin(first)
+        let firstSecondary = secondaryPath.begin(first)
         let centers = sampler.begin(at: d)
         switch tool {
         case .smudge, .liquify:
@@ -380,7 +387,7 @@ final class CanvasSession {
             beginClone(at: d)
             applyClone(centers, pressure: pressure)
         default:
-            canvas.add(symmetricDabs(centers, pressure: pressure) + secondaryDabs(secondaryCenters, pressure: pressure))
+            canvas.add(symmetricDabs(firstDabs) + secondaryDabs(settings.resolvedSecondary == nil ? [] : firstSecondary))
             beginQuickShapeWatch(at: d, pressure: pressure)
         }
     }
@@ -412,32 +419,60 @@ final class CanvasSession {
             return
         }
         guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
-        let spacing = settings.spacing(radius: settings.radius(pressure: pressure), random: strokeRandom.next(), speed: strokeSpeed)
-        let centers = sampler.add(d, spacing: spacing)
         switch tool {
-        case .smudge: applySmudge(centers, pressure: pressure)
-        case .liquify: applyLiquify(centers, pressure: pressure)
-        case .clone, .effect: applyClone(centers, pressure: pressure)
-        default:
-            var secondaryCenters: [Vec3] = []
-            if let secondary = settings.resolvedSecondary {
-                let step = secondary.spacing(radius: secondary.radius(pressure: pressure), random: secondaryRandom.next(), speed: strokeSpeed)
-                secondaryCenters = secondarySampler.add(d, spacing: step)
+        case .smudge, .liquify, .clone, .effect:
+            let spacing = settings.spacing(radius: settings.radius(pressure: pressure), random: strokeRandom.next(), speed: strokeSpeed)
+            let centers = sampler.add(d, spacing: spacing)
+            switch tool {
+            case .smudge: applySmudge(centers, pressure: pressure)
+            case .liquify: applyLiquify(centers, pressure: pressure)
+            default: applyClone(centers, pressure: pressure)
             }
-            canvas.add(symmetricDabs(centers, pressure: pressure) + secondaryDabs(secondaryCenters, pressure: pressure))
+        default:
+            canvas.add(advancePaths(StrokeSample(point: d, pressure: pressure, tilt: tilt), finishing: false))
             noteQuickShapePoint(d)
         }
+    }
+
+    /// Fait avancer les courbes du pinceau (et de son secondaire) jusqu'à `sample`, ou les termine au lever ;
+    /// renvoie les dabs des segments complétés.
+    private func advancePaths(_ sample: StrokeSample?, finishing: Bool) -> [SphericalDab] {
+        let brush = settings
+        var path = brushPath
+        let primarySpacing: (Double) -> Double = { p in
+            brush.spacing(radius: brush.radius(pressure: p), random: self.strokeRandom.next(), speed: self.strokeSpeed)
+        }
+        let samples = sample.map { path.add($0, spacing: primarySpacing) } ?? (finishing ? path.finish(spacing: primarySpacing) : [])
+        brushPath = path
+        var dabs = symmetricDabs(samples)
+        if let secondary = brush.resolvedSecondary {
+            var second = secondaryPath
+            let secondarySpacing: (Double) -> Double = { p in
+                secondary.spacing(radius: secondary.radius(pressure: p), random: self.secondaryRandom.next(), speed: self.strokeSpeed)
+            }
+            let secondSamples = sample.map { second.add($0, spacing: secondarySpacing) }
+                ?? (finishing ? second.finish(spacing: secondarySpacing) : [])
+            secondaryPath = second
+            dabs += secondaryDabs(secondSamples)
+        }
+        return dabs
     }
 
     /// Dabs du trait et leurs copies par symétrie.
     /// Chaque copie garde l'angle de son propre trait (les reflets tournent dans l'autre sens).
     func symmetricDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
+        symmetricDabs(centers.map { StrokeSample(point: $0, pressure: pressure, tilt: strokeTilt) })
+    }
+
+    /// Dabs aux points du trait (pression et inclinaison propres à chacun) et leurs copies par symétrie.
+    func symmetricDabs(_ samples: [StrokeSample]) -> [SphericalDab] {
         var dabs: [SphericalDab] = []
-        for center in centers {
+        for sample in samples {
+            let center = sample.point
             if let previous = previousDabCenter { strokeDistance += Sphere.angle(previous, center) }
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousDabCenter ?? center)
-            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: strokeTilt,
+            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: sample.tilt,
                                         grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
             // Plusieurs tampons par dab (Forme > Nombre) ; mêmes tirages pour toutes les copies de symétrie.
             let count = settings.stampCount(random: strokeRandom.next())
@@ -445,7 +480,9 @@ final class CanvasSession {
                 let random = settings.hasJitter ? strokeRandom.dab() : .none
                 for (i, image) in images.enumerated() {
                     let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
-                    dabs.append(dab(at: image, pressure: pressure, strokeAngle: angle, random: random, context: context))
+                    let made = dab(at: image, pressure: sample.pressure, strokeAngle: angle, random: random, context: context)
+                    strokeRecords.append((made, strokeDistance))
+                    dabs.append(made)
                 }
             }
             previousDabCenter = center
@@ -453,30 +490,56 @@ final class CanvasSession {
         return dabs
     }
 
-    /// Dabs du pinceau secondaire d'un pinceau double (vide sinon), avec leurs copies par symétrie.
     func secondaryDabs(_ centers: [Vec3], pressure: Double) -> [SphericalDab] {
-        guard let secondary = settings.resolvedSecondary, !centers.isEmpty else { return [] }
+        secondaryDabs(centers.map { StrokeSample(point: $0, pressure: pressure, tilt: strokeTilt) })
+    }
+
+    /// Dabs du pinceau secondaire d'un pinceau double (vide sinon), avec leurs copies par symétrie.
+    func secondaryDabs(_ samples: [StrokeSample]) -> [SphericalDab] {
+        guard let secondary = settings.resolvedSecondary, !samples.isEmpty else { return [] }
         var dabs: [SphericalDab] = []
         let mode: DabMode = tool == .brush ? .paint : .erase
-        for center in centers {
+        for sample in samples {
+            let center = sample.point
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousSecondaryCenter ?? center)
-            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: strokeTilt,
+            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: sample.tilt,
                                         grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
             let count = secondary.stampCount(random: secondaryRandom.next())
             for _ in 0..<count {
                 let random = secondary.hasJitter ? secondaryRandom.dab() : .none
                 for (i, image) in images.enumerated() {
                     let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
-                    var dab = secondary.dab(at: image, pressure: pressure, color: linearColor, mode: mode, strokeAngle: angle,
+                    var dab = secondary.dab(at: image, pressure: sample.pressure, color: linearColor, mode: mode, strokeAngle: angle,
                                             random: random, context: context)
                     dab.secondary = true
+                    strokeRecords.append((dab, strokeDistance))
                     dabs.append(dab)
                 }
             }
             previousSecondaryCenter = center
         }
         return dabs
+    }
+
+    /// Effilement de fin : au lever, le trait est repeint avec ses derniers dabs affinés (taille et opacité).
+    private func applyEndTaper(_ canvas: StackCanvas) {
+        let brush = settings
+        let secondary = brush.resolvedSecondary
+        guard brush.taperEndLength > 0 || (secondary?.taperEndLength ?? 0) > 0, !strokeRecords.isEmpty else { return }
+        let total = strokeDistance
+        var changed = false
+        let dabs = strokeRecords.map { record -> SphericalDab in
+            var dab = record.dab
+            let taper = (dab.secondary ? secondary ?? brush : brush).endTaper(remaining: total - record.distance)
+            if taper.size < 1 || taper.opacity < 1 {
+                changed = true
+                dab.radius = max(1e-5, dab.radius * taper.size)
+                dab.color.w *= Float(taper.opacity)
+            }
+            return dab
+        }
+        if changed { canvas.replaceStroke(with: dabs) }
     }
 
     func strokeEnded() {
@@ -503,6 +566,11 @@ final class CanvasSession {
             return
         }
         guard let canvas, canvas.isStroking else { return }
+        // Pinceau et gomme : dernier segment de la courbe, puis effilement de fin (sauf forme rapide déjà posée).
+        if tool == .brush || tool == .eraser, !quickShapeApplied {
+            canvas.add(advancePaths(nil, finishing: true))
+            applyEndTaper(canvas)
+        }
         if let result = canvas.endStroke(), !result.deltas.isEmpty {
             history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: result.layerID, deltas: result.deltas))
         }
@@ -672,6 +740,12 @@ final class CanvasMTKView: MTKView {
         return min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2)))
     }
 
+    /// Position du trait : précise au sous-point pour le Pencil (`location` est arrondie au point d'écran,
+    /// ce qui crénelle les traits lents et fins).
+    private func point(_ touch: UITouch) -> CGPoint {
+        touch.type == .pencil ? touch.preciseLocation(in: self) : touch.location(in: self)
+    }
+
     /// Pression normalisée du Pencil ; le doigt n'en a pas (1).
     private func pressure(_ touch: UITouch) -> Double {
         guard touch.type == .pencil, touch.maximumPossibleForce > 0 else { return 1 }
@@ -698,7 +772,7 @@ final class CanvasMTKView: MTKView {
         }
         guard drawingTouch == nil, let touch = touches.first(where: canDraw) else { return }
         drawingTouch = touch
-        session.strokeBegan(ndc: ndc(touch.location(in: self)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch))
+        session.strokeBegan(ndc: ndc(point(touch)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -709,7 +783,7 @@ final class CanvasMTKView: MTKView {
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
-            session.strokeMoved(ndc: ndc(t.location(in: self)), aspect: aspect, pressure: pressure(t), tilt: tilt(t))
+            session.strokeMoved(ndc: ndc(point(t)), aspect: aspect, pressure: pressure(t), tilt: tilt(t))
         }
     }
 

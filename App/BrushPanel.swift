@@ -37,13 +37,25 @@ struct BrushPanel: View {
 
     private var categories: [String] { ["Base"] + BuiltInBrushes.categories + ["Mes pinceaux"] }
 
+    /// Encre : bord net, pointes effilées au début et à la fin, léger StreamLine, pression douce.
+    static var ink: BrushSettings {
+        var s = BrushSettings(radiusDegrees: 0.8, hardness: 1, spacing: 0.05, minimumSize: 0.05)
+        s.name = "Encre"
+        s.taperStartLength = 2
+        s.taperEndLength = 3
+        s.taperSize = 0.85
+        s.streamLine = 0.2
+        s.pressureCurve = PressureCurve(points: [[0, 0], [0.4, 0.55], [1, 1]])
+        return s
+    }
+
     private var entries: [BrushEntry] {
         switch category {
         case "Base":
             [BrushEntry(id: "base/rond", name: "Rond dur", settings: BrushSettings(radiusDegrees: 2, hardness: 0.9, spacing: 0.12)),
              BrushEntry(id: "base/doux", name: "Aérographe doux", settings: BrushSettings(radiusDegrees: 6, opacity: 0.4, hardness: 0, spacing: 0.1,
                                                                                           pressureAffectsSize: false, pressureAffectsOpacity: true)),
-             BrushEntry(id: "base/encre", name: "Encre", settings: BrushSettings(radiusDegrees: 0.8, hardness: 1, spacing: 0.08, minimumSize: 0.05)),
+             BrushEntry(id: "base/encre", name: "Encre", settings: Self.ink),
              BrushEntry(id: "base/gomme", name: "Gomme douce", settings: BrushSettings.defaultEraser)]
         case "Mes pinceaux":
             saved.map { BrushEntry(id: "mes/\($0.url.lastPathComponent)", name: $0.preset.name, settings: $0.preset.settings) }

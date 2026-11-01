@@ -262,6 +262,19 @@ public final class TiledLayer {
         return touched
     }
 
+    /// Remet les tuiles du trait en cours dans leur état d'avant le trait et vide son masque (pour le repeindre autrement).
+    /// Renvoie les tuiles remises.
+    @discardableResult
+    public func resetStroke(_ buffer: StrokeBuffer) -> Set<TileCoord> {
+        for (coord, bytes) in buffer.originals {
+            willModify(coord)
+            setContent(nil, at: coord)
+            putPixels(bytes, at: coord)
+            buffer.masks[coord] = [SIMD4<Float16>](repeating: .zero, count: TileSize.pixelCount)
+        }
+        return Set(buffer.originals.keys)
+    }
+
     /// Remplace une tuile par des pixels bruts du format du calque (résultat d'un trait peint sur le GPU). Enregistré dans l'historique.
     public func replaceTile(_ coord: TileCoord, with bytes: [UInt8]) {
         precondition(bytes.count == format.bytesPerTile, "taille de tuile invalide")

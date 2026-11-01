@@ -55,14 +55,14 @@ public struct DabEvaluator: Sendable {
     public let grainLOD: Float
 
     public init(_ dab: SphericalDab, pixelAngle: Double) {
-        self.dab = dab
+        self.dab = dab.resolved(pixelAngle: pixelAngle)
         self.frame = TangentFrame(center: dab.center)
         self.pixelAngle = pixelAngle
         // Une forme occupe le carré circonscrit au disque : sa portée va jusqu'aux coins.
-        let extent = dab.tip?.shape != nil ? dab.radius * 2.0.squareRoot() : dab.radius
+        let extent = self.dab.tip?.shape != nil ? self.dab.radius * 2.0.squareRoot() : self.dab.radius
         self.reach = extent + pixelAngle
         self.cosReach = cos(reach)
-        shapeLOD = dab.tip?.shapeLOD(radius: dab.radius, pixelAngle: pixelAngle) ?? 0
+        shapeLOD = self.dab.tip?.shapeLOD(radius: self.dab.radius, pixelAngle: pixelAngle) ?? 0
         grainLOD = dab.tip?.grainLOD(pixelAngle: pixelAngle) ?? 0
     }
 

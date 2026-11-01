@@ -75,6 +75,23 @@ public struct SphericalDab: Sendable {
     }
 }
 
+extension SphericalDab {
+    /// Rayon minimal rendu, en texels : en dessous, un dab tombe entre les texels et le trait scintille (pointillés).
+    public static let minimumRadiusTexels = 0.7
+
+    /// Le dab tel qu'il est rendu sur une toile dont un texel couvre `pixelAngle` radians : un dab plus petit qu'un texel
+    /// est agrandi à `minimumRadiusTexels` et son opacité réduite d'autant (même quantité de peinture, trait continu).
+    public func resolved(pixelAngle: Double) -> SphericalDab {
+        let minimum = Self.minimumRadiusTexels * pixelAngle
+        guard radius < minimum else { return self }
+        var dab = self
+        let k = radius / minimum
+        dab.radius = minimum
+        dab.color.w *= Float(k * k)
+        return dab
+    }
+}
+
 /// Peindre ou effacer : même moteur, même forme (la gomme n'utilise que l'opacité de `color`).
 public enum DabMode: Sendable {
     case paint
@@ -109,7 +126,7 @@ public enum SphericalRasterizer {
                 for x in range {
                     let a = evaluator.coverage(at: canvas.direction(x: x, y: y))
                     if a <= 0 { continue }
-                    apply(dab, coverage: a, to: &canvas.pixels[y * canvas.width + x], space: space)
+                    apply(evaluator.dab, coverage: a, to: &canvas.pixels[y * canvas.width + x], space: space)
                     touched = touched.map { min($0.lowerBound, y)...max($0.upperBound, y) } ?? y...y
                 }
             }

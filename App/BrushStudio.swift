@@ -289,10 +289,11 @@ struct BrushStudioView: View {
 
     private var taper: some View {
         StudioCard {
-            StudioSlider("Longueur", value: $draft.taperStartLength, range: 0...10) { $0 == 0 ? "Aucune" : String(format: "%.1f ⌀", $0) }
+            StudioSlider("Longueur au début", value: $draft.taperStartLength, range: 0...10) { $0 == 0 ? "Aucune" : String(format: "%.1f ⌀", $0) }
+            StudioSlider("Longueur à la fin", value: $draft.taperEndLength, range: 0...10) { $0 == 0 ? "Aucune" : String(format: "%.1f ⌀", $0) }
             StudioSlider("Taille", value: $draft.taperSize, range: 0...1)
             StudioSlider("Opacité", value: $draft.taperOpacity, range: 0...1)
-            Text("Effilement au début du trait. La fin suit la pression du Pencil.")
+            Text("La fin du trait s'affine au lever du stylet : le trait est alors repeint avec sa pointe.")
                 .font(.caption).foregroundStyle(.white.opacity(0.5))
         }
     }
@@ -731,12 +732,15 @@ final class BrushPadUIView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard var pending = stabilizer else { return }
-        stabilizer = nil
-        for point in pending.finish(step: 1) {
-            lastTime += 0.002
-            painter?.addPoint(point.point, pressure: point.pressure, tilt: lastTilt, time: lastTime)
+        if var pending = stabilizer {
+            stabilizer = nil
+            for point in pending.finish(step: 1) {
+                lastTime += 0.002
+                painter?.addPoint(point.point, pressure: point.pressure, tilt: lastTilt, time: lastTime)
+            }
         }
+        // Dernier segment de la courbe et effilement de fin, comme sur la toile.
+        painter?.finish()
         refresh()
     }
 
