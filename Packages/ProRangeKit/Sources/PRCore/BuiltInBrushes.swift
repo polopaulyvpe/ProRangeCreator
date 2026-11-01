@@ -10,10 +10,10 @@ public struct BuiltInBrush: Sendable, Identifiable {
 }
 
 public enum BuiltInBrushes {
-    public static let categories = ["Nuages", "Ciel nocturne", "Atmosphère", "Végétation", "Tampons"]
+    public static let categories = drawingCategories + ["Nuages", "Ciel nocturne", "Atmosphère", "Végétation", "Tampons"]
 
     /// Générés une fois, au premier accès.
-    public static let all: [BuiltInBrush] = make()
+    public static let all: [BuiltInBrush] = drawingPack() + make()
 
     /// Substitut des formes internes de Procreate (non incluses dans les .brush) : tache ronde granuleuse.
     public static let substituteShape: BrushTexture = shape("Substitut granuleux") { x, y in
@@ -31,7 +31,7 @@ public enum BuiltInBrushes {
     // MARK: - Bruit
 
     /// Hachage entier → [0, 1).
-    private static func hash(_ x: Int, _ y: Int, _ seed: Int) -> Float {
+    static func hash(_ x: Int, _ y: Int, _ seed: Int) -> Float {
         var h = UInt32(truncatingIfNeeded: x &* 374_761_393 &+ y &* 668_265_263 &+ seed &* 1_442_695_041)
         h = (h ^ (h >> 13)) &* 1_274_126_177
         h ^= h >> 16
@@ -39,7 +39,7 @@ public enum BuiltInBrushes {
     }
 
     /// Bruit de valeur 2D lissé, périodique de période `period` (pour des grains raccordables).
-    private static func noise(_ x: Float, _ y: Float, period: Int, seed: Int) -> Float {
+    static func noise(_ x: Float, _ y: Float, period: Int, seed: Int) -> Float {
         let xi = Int(floor(x)), yi = Int(floor(y))
         let fx = x - Float(xi), fy = y - Float(yi)
         let sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy)
@@ -52,7 +52,7 @@ public enum BuiltInBrushes {
     }
 
     /// Somme d'octaves dans [0, 1].
-    private static func fbm(_ x: Float, _ y: Float, octaves: Int = 4, period: Int = 8, seed: Int = 1) -> Float {
+    static func fbm(_ x: Float, _ y: Float, octaves: Int = 4, period: Int = 8, seed: Int = 1) -> Float {
         var sum: Float = 0, amplitude: Float = 0.5, total: Float = 0
         var frequency: Float = 1, p = period
         for o in 0..<octaves {
@@ -65,13 +65,13 @@ public enum BuiltInBrushes {
         return sum / total
     }
 
-    private static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+    static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(1, max(0, (x - a) / (b - a)))
         return t * t * (3 - 2 * t)
     }
 
     /// Texture carrée : `f(x, y)` avec x vers la droite et y vers le haut dans [-1, 1].
-    private static func shape(_ name: String, size: Int = 256, _ f: (Float, Float) -> Float) -> BrushTexture {
+    static func shape(_ name: String, size: Int = 256, _ f: (Float, Float) -> Float) -> BrushTexture {
         var values = [Float](repeating: 0, count: size * size)
         for row in 0..<size {
             let y = 1 - 2 * (Float(row) + 0.5) / Float(size)
@@ -84,7 +84,7 @@ public enum BuiltInBrushes {
     }
 
     /// Grain raccordable : `f(u, v)` avec u, v dans [0, 1).
-    private static func grain(_ name: String, size: Int = 256, _ f: (Float, Float) -> Float) -> BrushTexture {
+    static func grain(_ name: String, size: Int = 256, _ f: (Float, Float) -> Float) -> BrushTexture {
         var values = [Float](repeating: 0, count: size * size)
         for row in 0..<size {
             for column in 0..<size {
