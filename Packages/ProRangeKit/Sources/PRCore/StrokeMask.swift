@@ -101,14 +101,18 @@ public struct StrokeStyle: Sendable, Equatable {
     public var capsSecondary: Bool
     /// Combinaison avec le pinceau secondaire ; nil = pinceau simple.
     public var dual: DualBlendMode?
+    /// Chaque tampon apporte sa couleur (dynamique de couleur, mélange humide) : le trait garde une couleur par texel
+    /// (voir `StrokeMask.depositColor`) au lieu de `color`.
+    public var varyingColor: Bool
 
     public init(color: SIMD3<Float>, mode: DabMode = .paint, capsPrimary: Bool = true, capsSecondary: Bool = true,
-                dual: DualBlendMode? = nil) {
+                dual: DualBlendMode? = nil, varyingColor: Bool = false) {
         self.color = color
         self.mode = mode
         self.capsPrimary = capsPrimary
         self.capsSecondary = capsSecondary
         self.dual = dual
+        self.varyingColor = varyingColor
     }
 }
 
@@ -129,6 +133,20 @@ public enum StrokeMask {
         }
     }
 
+    /// Couleur du trait en ce texel quand chaque tampon a la sienne (`StrokeStyle.varyingColor`), à appeler avant
+    /// `accumulate` avec le masque d'avant le tampon (principal seulement). Le tampon remplace la couleur en proportion de
+    /// ce qu'il ajoute au masque, et au moins de sa propre opacité × flux : sur un texel vierge il la pose telle quelle,
+    /// sur un glacis déjà plein il la recouvre selon sa force (une variation de couleur reste visible).
+    @inline(__always)
+    public static func depositColor(_ c: inout SIMD3<Float>, mask m: SIMD4<Float>, coverage: Float, opacity: Float, flow: Float,
+                                    color: SIMD3<Float>) {
+        let f = coverage * opacity * flow
+        guard f > 0 else { return }
+        let added = f * (1 - m.x)
+        let w = min(1, max(added / max(m.x + added, 1e-6), f))
+        c = w >= 1 ? color : c + (color - c) * w
+    }
+
     /// Opacité finale du trait en ce texel.
     @inline(__always)
     public static func alpha(_ m: SIMD4<Float>, style: StrokeStyle) -> Float {
@@ -138,17 +156,19 @@ public enum StrokeMask {
         return dual.combine(p, s)
     }
 
-    /// Pixel du calque (RGBA linéaire prémultiplié) : l'original d'avant le trait, avec le trait posé d'opacité `alpha`.
+    /// Pixel du calque (RGBA linéaire prémultiplié) : l'original d'avant le trait, avec le trait posé d'opacité `alpha`,
+    /// de la couleur du style ou de `color` (couleur du texel, pinceau à couleur variable).
     @inline(__always)
     public static func composite(_ original: SIMD4<Float>, alpha: Float, style: StrokeStyle, space: BlendSpace,
-                                 alphaLock: Bool) -> SIMD4<Float> {
+                                 alphaLock: Bool, color texel: SIMD3<Float>? = nil) -> SIMD4<Float> {
         guard alpha > 0 else { return original }
         var dst = original
         switch style.mode {
         case .erase:
             dst *= 1 - alpha
         case .paint:
-            let color = SIMD4<Float>(style.color.x, style.color.y, style.color.z, 1)
+            let rgb = texel ?? style.color
+            let color = SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1)
             switch space {
             case .linear: SphericalRasterizer.blend(color, coverage: alpha, into: &dst)
             case .perceptual: SphericalRasterizer.blendPerceptual(color, coverage: alpha, into: &dst)

@@ -466,6 +466,9 @@ public final class TiledLayer {
         }
         let original = buffer.originals[coord]!
         var strokeMask = buffer.masks.removeValue(forKey: coord)!
+        let varying = style.varyingColor
+        var colors = varying ? buffer.colors.removeValue(forKey: coord) ?? [SIMD4<Float16>](repeating: .zero, count: TileSize.pixelCount) : []
+        let dabColor = SIMD3<Float>(dab.color.x, dab.color.y, dab.color.z)
         original.withUnsafeBytes { source in
             pixels.withUnsafeMutableBytes { raw in
                 let base = raw.baseAddress!
@@ -478,18 +481,31 @@ public final class TiledLayer {
                         if a <= 0 { continue }
                         let index = row + (x - coord.x * side)
                         var m = StrokeBuffer.widen(strokeMask[index])
+                        var texel: SIMD3<Float>?
+                        if varying {
+                            let c4 = StrokeBuffer.widen(colors[index])
+                            var c = SIMD3<Float>(c4.x, c4.y, c4.z)
+                            if !dab.secondary {
+                                StrokeMask.depositColor(&c, mask: m, coverage: a, opacity: dab.color.w, flow: dab.flow, color: dabColor)
+                                let kept = StrokeBuffer.narrow(SIMD4<Float>(c.x, c.y, c.z, 0))
+                                colors[index] = kept
+                                c = SIMD3<Float>(Float(kept.x), Float(kept.y), Float(kept.z))
+                            }
+                            texel = c
+                        }
                         StrokeMask.accumulate(&m, coverage: a, opacity: dab.color.w, flow: dab.flow, secondary: dab.secondary)
                         let stored = StrokeBuffer.narrow(m)
                         strokeMask[index] = stored
                         let before = Self.read(source.baseAddress!, index, format)
                         let p = StrokeMask.composite(before, alpha: StrokeMask.alpha(StrokeBuffer.widen(stored), style: style),
-                                                     style: style, space: space, alphaLock: alphaLock)
+                                                     style: style, space: space, alphaLock: alphaLock, color: texel)
                         Self.write(base, index, p, format)
                     }
                 }
             }
         }
         buffer.masks[coord] = strokeMask
+        if varying { buffer.colors[coord] = colors }
         putPixels(pixels, at: coord)
         return true
     }

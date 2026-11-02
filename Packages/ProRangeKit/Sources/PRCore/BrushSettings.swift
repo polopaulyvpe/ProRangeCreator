@@ -100,7 +100,31 @@ public struct BrushSettings: Equatable, Sendable {
     /// Grain mobile : 0 = collé à chaque tampon (glisse), 1 = rouleau (il défile le long du trait, comme fixé au papier).
     public var grainMovement: Double = 0
 
-    // MARK: Mélange humide (réglages conservés ; voir DECISIONS)
+    // MARK: Dynamique de couleur (voir `ColorDynamics`), chacune dans [0, 1]
+    /// Variation par tampon : teinte, saturation, éclaircir, assombrir, couleur secondaire.
+    public var stampHueJitter: Double = 0
+    public var stampSaturationJitter: Double = 0
+    public var stampLightnessJitter: Double = 0
+    public var stampDarknessJitter: Double = 0
+    public var stampSecondaryJitter: Double = 0
+    /// Variation tirée une fois par trait.
+    public var strokeHueJitter: Double = 0
+    public var strokeSaturationJitter: Double = 0
+    public var strokeLightnessJitter: Double = 0
+    public var strokeDarknessJitter: Double = 0
+    public var strokeSecondaryJitter: Double = 0
+    /// Couleur selon la pression.
+    public var pressureHue: Double = 0
+    public var pressureSaturation: Double = 0
+    public var pressureBrightness: Double = 0
+    public var pressureSecondary: Double = 0
+    /// Couleur selon l'inclinaison (au-delà du seuil d'inclinaison).
+    public var tiltHue: Double = 0
+    public var tiltSaturation: Double = 0
+    public var tiltBrightness: Double = 0
+    public var tiltSecondary: Double = 0
+
+    // MARK: Mélange humide (voir `WetMixer`)
     public var wetDilution: Double = 0
     public var wetCharge: Double = 1
     public var wetAttack: Double = 0
@@ -139,7 +163,8 @@ public struct BrushSettings: Equatable, Sendable {
     /// Façon de poser le trait de ce pinceau.
     public func strokeStyle(color: SIMD3<Float>, mode: DabMode) -> StrokeStyle {
         StrokeStyle(color: color, mode: mode, capsPrimary: rendering.capsOpacity,
-                    capsSecondary: secondary?.rendering.capsOpacity ?? true, dual: secondary == nil ? nil : dualBlendMode)
+                    capsSecondary: secondary?.rendering.capsOpacity ?? true, dual: secondary == nil ? nil : dualBlendMode,
+                    varyingColor: mode == .paint && varyingColor)
     }
 
     // MARK: Dynamique
@@ -174,6 +199,16 @@ public struct BrushSettings: Equatable, Sendable {
     public var tiltOpacity: Double = 0
     public var tiltSize: Double = 0
     public var tiltAngleDegrees: Double = 30
+    /// Azimut : la forme tourne avec la direction du Pencil (remplace la rotation suivant le trait ; sans effet au doigt).
+    public var azimuthRotation = false
+    /// Rondeur de la forme selon la pression (légère = écrasée) et l'inclinaison (couchée = écrasée), dans [0, 1].
+    public var pressureRoundness: Double = 0
+    public var tiltRoundness: Double = 0
+    /// Bavure : bord adouci et grain plus marqué à pression légère, ou quand le Pencil est incliné, dans [0, 1].
+    public var pressureBleed: Double = 0
+    public var tiltBleed: Double = 0
+    /// Dégradé : le bord s'adoucit quand le Pencil est incliné (ombrage sur le côté de la mine), dans [0, 1].
+    public var tiltGradation: Double = 0
 
     // MARK: Propriétés
     /// Bornes des curseurs latéraux.
@@ -185,6 +220,7 @@ public struct BrushSettings: Equatable, Sendable {
     public var hasJitter: Bool {
         spacingJitter > 0 || scatter > 0 || longitudinalJitter > 0 || sizeJitter > 0 || opacityJitter > 0 || rotationJitter > 0 || randomFlip
             || stampCountJitter > 0 || grainDepthJitter > 0 || roundnessJitter > 0 || roundnessJitterX > 0
+            || hasColorDynamics || (wetMixActive && (wetnessJitter > 0 || wetBlurJitter > 0))
     }
 
     public init(radiusDegrees: Double = 2, opacity: Double = 1, hardness: Double = 0.8, spacing: Double = 0.15,
@@ -268,6 +304,16 @@ public struct BrushSettings: Equatable, Sendable {
         let tilted = min(1, max(0, (context.tilt * 90 - threshold) / (90 - threshold)))
         sizeScale *= 1 + tiltSize * tilted
         alphaScale *= max(0, 1 - tiltOpacity * tilted)
+        let curved = curvedPressure(pressure)
+        // Bavure et dégradé : bord adouci (et grain plus marqué) à pression légère ou Pencil incliné.
+        let bleed = min(1, max(0, pressureBleed) * (1 - curved) + max(0, tiltBleed) * tilted)
+        let softness = min(1, bleed + max(0, tiltGradation) * tilted)
+        let edgeHardness = hardness * (1 - softness)
+        var paint = color
+        if hasColorDynamics {
+            paint = ColorDynamics.apply(color, secondary: context.secondaryColor ?? color, brush: self, stamp: random.color,
+                                        stroke: context.colorDraw, pressure: curved, tilt: tilted)
+        }
 
         let size = max(radiusDegrees * .pi / 180 * sizeScale, 1e-5)
         let alpha = min(1, max(0, opacity * alphaScale))
@@ -286,14 +332,19 @@ public struct BrushSettings: Equatable, Sendable {
         if shift != .zero { position = TangentFrame(center: center).unproject(shift) }
         var tip: DabTip?
         if shape != nil || grain != nil {
-            var rotation = shapeRotationDegrees * .pi / 180 + (followStroke ? strokeAngle : 0) + rotationJitter * (random.rotation * 2 - 1)
+            // Azimut : la forme suit la direction du Pencil (au doigt, la rotation habituelle).
+            let direction = azimuthRotation ? context.azimuth ?? (followStroke ? strokeAngle : 0) : (followStroke ? strokeAngle : 0)
+            var rotation = shapeRotationDegrees * .pi / 180 + direction + rotationJitter * (random.rotation * 2 - 1)
             if randomizeRotation { rotation += context.rotationOffset }
             var depth = min(1, max(0, grainDepth))
             if grainDepthMinimum > 0 {
-                let p = curvedPressure(pressure)
-                depth = grainDepthMinimum + (depth - grainDepthMinimum) * p
+                depth = grainDepthMinimum + (depth - grainDepthMinimum) * curved
             }
             depth *= 1 - min(1, max(0, grainDepthJitter)) * random.depth
+            depth += (1 - depth) * bleed
+            // Grade (mélange humide) : texture plus contrastée.
+            if wetMixActive { depth += (1 - depth) * min(1, max(0, wetGrade)) }
+            let squash = (1 - min(1, max(0, pressureRoundness)) * (1 - curved)) * (1 - min(1, max(0, tiltRoundness)) * tilted)
             let grainScale = max(0.05, grainScaleDegrees) * .pi / 180
             let grainRotation = grainRotationDegrees * .pi / 180
             var grainOffset = grainOffsetJitter ? context.grainOffset : .zero
@@ -306,12 +357,12 @@ public struct BrushSettings: Equatable, Sendable {
             }
             tip = DabTip(shape: shape, grain: grain, rotation: rotation, grainScale: grainScale, grainDepth: depth,
                          flipX: randomFlip && random.flip,
-                         roundness: max(0.05, min(1, shapeRoundness) * (1 - min(1, max(0, roundnessJitter)) * random.roundY)),
+                         roundness: max(0.05, min(1, shapeRoundness) * (1 - min(1, max(0, roundnessJitter)) * random.roundY) * squash),
                          grainMoving: grainMoving, grainRotation: grainRotation, grainOffset: grainOffset,
                          grainBlend: grainBlendMode, width: max(0.05, 1 - min(1, max(0, roundnessJitterX)) * random.roundX))
         }
-        var dab = SphericalDab(center: position, radius: size, hardness: hardness,
-                               color: SIMD4<Float>(color.x, color.y, color.z, Float(alpha)), mode: mode, tip: tip)
+        var dab = SphericalDab(center: position, radius: size, hardness: edgeHardness,
+                               color: SIMD4<Float>(paint.x, paint.y, paint.z, Float(alpha)), mode: mode, tip: tip)
         dab.flow = Float(flow(pressure: pressure))
         return dab
     }
@@ -358,14 +409,23 @@ public struct StrokeContext: Sendable, Equatable {
     /// Décalage du grain et angle de départ de la forme, tirés une fois par trait.
     public var grainOffset: SIMD2<Double>
     public var rotationOffset: Double
+    /// Azimut du Pencil dans le plan tangent (radians depuis l'est local), nil au doigt.
+    public var azimuth: Double?
+    /// Tirages de couleur du trait et couleur secondaire (dynamique de couleur ; nil = la couleur du pinceau).
+    public var colorDraw: ColorDraw
+    public var secondaryColor: SIMD3<Float>?
 
     public init(distance: Double = .infinity, speed: Double = 0, tilt: Double = 0, grainOffset: SIMD2<Double> = .zero,
-                rotationOffset: Double = 0) {
+                rotationOffset: Double = 0, azimuth: Double? = nil, colorDraw: ColorDraw = .none,
+                secondaryColor: SIMD3<Float>? = nil) {
         self.distance = distance
         self.speed = speed
         self.tilt = tilt
         self.grainOffset = grainOffset
         self.rotationOffset = rotationOffset
+        self.azimuth = azimuth
+        self.colorDraw = colorDraw
+        self.secondaryColor = secondaryColor
     }
 
     /// Aucun effet (trait déjà bien engagé, immobile, Pencil vertical).
@@ -386,6 +446,11 @@ public struct DabRandom: Sendable, Equatable {
     /// Variations de rondeur verticale et horizontale.
     public var roundY: Double = 0
     public var roundX: Double = 0
+    /// Dynamique de couleur par tampon.
+    public var color = ColorDraw.none
+    /// Mélange humide : humidité (centrée sur 0,5) et flou.
+    public var wet: Double = 0.5
+    public var blur: Double = 0
 
     public init(size: Double, opacity: Double, rotation: Double, scatter: Double, flip: Bool) {
         self.size = size
@@ -420,6 +485,13 @@ public struct StrokeRandom: Sendable {
         random.along = next()
         random.roundY = next()
         random.roundX = next()
+        random.color = colorDraw()
+        random.wet = next()
+        random.blur = next()
         return random
+    }
+
+    public mutating func colorDraw() -> ColorDraw {
+        ColorDraw(hue: next(), saturation: next(), lightness: next(), darkness: next(), secondary: next())
     }
 }

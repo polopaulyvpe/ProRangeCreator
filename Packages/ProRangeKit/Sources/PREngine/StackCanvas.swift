@@ -65,6 +65,14 @@ public final class StackCanvas {
     /// Masque du trait et copie du calque actif d'avant le trait (chemin rapide), créés au premier trait.
     private var strokeMaskTexture: (any MTLTexture)?
     private var strokeOriginalTexture: (any MTLTexture)?
+    /// Couleur par texel d'un pinceau à couleur variable (créée au premier besoin).
+    private var strokeColorTexture: (any MTLTexture)?
+    /// Anticipation : copies du masque et de la couleur où sont posés les dabs prédits, tuiles qu'ils recouvrent,
+    /// dabs à poser à la prochaine image.
+    private var predictionMaskTexture: (any MTLTexture)?
+    private var predictionColorTexture: (any MTLTexture)?
+    private var predictionTiles = Set<TileCoord>()
+    private var predicted: [SphericalDab] = []
     private var lastCommands: (any MTLCommandBuffer)?
 
     public init(stack: LayerStack, device: (any MTLDevice)?, maxDisplayWidth: Int = 8192) {
@@ -133,11 +141,54 @@ public final class StackCanvas {
         strokeStyle = style
         strokeBuffer = style == nil ? nil : StrokeBuffer()
         if !usesFastPath { target.beginOperation() }
-        if usesFastPath, style != nil, let brush, let active, strokeMaskTexture == nil {
-            strokeMaskTexture = brush.makeStrokeTexture(width: active.texture.width, height: active.texture.height)
-            strokeOriginalTexture = brush.makeStrokeTexture(width: active.texture.width, height: active.texture.height)
+        if usesFastPath, let style, let brush, let active {
+            let width = active.texture.width, height = active.texture.height
+            if strokeMaskTexture == nil {
+                strokeMaskTexture = brush.makeStrokeTexture(width: width, height: height)
+                strokeOriginalTexture = brush.makeStrokeTexture(width: width, height: height)
+            }
+            if style.varyingColor, strokeColorTexture == nil { strokeColorTexture = brush.makeStrokeTexture(width: width, height: height) }
         }
     }
+
+    /// Anticipation : dabs des touches prédites du Pencil, montrés à la prochaine image seulement (remplacés par les
+    /// suivants, effacés avant chaque nouveau dab réel). Chemin GPU et trait à masque seulement ; vide = aucune.
+    public func setPrediction(_ dabs: [SphericalDab]) {
+        guard stroking, usesFastPath, strokeStyle != nil else { return }
+        predicted = dabs
+    }
+
+    /// Efface l'anticipation affichée (avant de poser des dabs réels ou de finir le trait).
+    private func revertPrediction(into commands: any MTLCommandBuffer) {
+        guard !predictionTiles.isEmpty else { return }
+        if let brush, let active, let style = strokeStyle, let mask = strokeMaskTexture, let original = strokeOriginalTexture {
+            brush.revertPrediction(tiles: predictionTiles, known: strokeTiles, style: style, space: blendSpace, alphaLock: alphaLocked,
+                                   layer: active.texture, original: original, mask: mask, color: strokeColorTexture,
+                                   commandBuffer: commands)
+            active.markChanged()
+        }
+        predictionTiles = []
+    }
+
+    /// Pose l'anticipation demandée par-dessus le trait.
+    private func drawPrediction(into commands: any MTLCommandBuffer) {
+        guard !predicted.isEmpty, stroking, let brush, let active, let style = strokeStyle, let mask = strokeMaskTexture,
+              let original = strokeOriginalTexture else { return }
+        let width = active.texture.width, height = active.texture.height
+        if predictionMaskTexture == nil { predictionMaskTexture = brush.makeStrokeTexture(width: width, height: height) }
+        if style.varyingColor, predictionColorTexture == nil {
+            predictionColorTexture = brush.makeStrokeTexture(width: width, height: height)
+        }
+        guard let scratch = predictionMaskTexture else { return }
+        predictionTiles = brush.encodePrediction(predicted, style: style, space: blendSpace, alphaLock: alphaLocked,
+                                                 layer: active.texture, original: original, mask: mask, color: strokeColorTexture,
+                                                 scratchMask: scratch, scratchColor: predictionColorTexture, known: strokeTiles,
+                                                 commandBuffer: commands)
+        active.markChanged()
+    }
+
+    /// Verrou alpha du chemin GPU (le même que `flushPending`).
+    private var alphaLocked: Bool { stack.item(activeID)?.alphaLock == true }
 
     public func add(_ dabs: [SphericalDab]) {
         guard stroking, let target = strokeLayer, !dabs.isEmpty else { return }
@@ -165,10 +216,13 @@ public final class StackCanvas {
         if usesFastPath {
             guard let brush, let active, let queue, let mask = strokeMaskTexture, let original = strokeOriginalTexture,
                   let commands = queue.makeCommandBuffer() else { return }
+            predicted = []
+            revertPrediction(into: commands)
             flushPending(into: commands)
             brush.resetStroke(tiles: strokeTiles, layer: active.texture, original: original, mask: mask, commandBuffer: commands)
             strokeTiles.formUnion(brush.encodeStroke(dabs, style: style, space: blendSpace, alphaLock: lock, layer: active.texture,
-                                                     original: original, mask: mask, known: strokeTiles, commandBuffer: commands))
+                                                     original: original, mask: mask, color: strokeColorTexture, known: strokeTiles,
+                                                     commandBuffer: commands))
             commands.commit()
             lastCommands = commands
             active.markChanged()
@@ -275,6 +329,8 @@ public final class StackCanvas {
         guard usesFastPath, let active, let queue else { return (target.id, target.endOperation()) }
 
         if let commands = queue.makeCommandBuffer() {
+            predicted = []
+            revertPrediction(into: commands)
             flushPending(into: commands)
             commands.commit()
             lastCommands = commands
@@ -295,9 +351,11 @@ public final class StackCanvas {
         strokeStyle = nil
         if usesFastPath {
             pending = []
+            predicted = []
             waitForGPU()
-            activeDirty.formUnion(strokeTiles)
+            activeDirty.formUnion(strokeTiles.union(predictionTiles))
             strokeTiles = []
+            predictionTiles = []
         } else {
             for delta in target.endOperation() {
                 target.restore(delta.before, at: delta.coord)
@@ -319,7 +377,14 @@ public final class StackCanvas {
             recomposite(compositeDirty)
             compositeDirty.removeAll()
         }
-        flushPending(into: commands)
+        // Anticipation : effacée avant les nouveaux dabs réels, puis reposée plus loin (une image d'avance sur la main).
+        if stroking, usesFastPath, !predictionTiles.isEmpty || !predicted.isEmpty {
+            revertPrediction(into: commands)
+            flushPending(into: commands)
+            drawPrediction(into: commands)
+        } else {
+            flushPending(into: commands)
+        }
         below?.finishUpdates(commands)
         if usesFastPath {
             active?.finishUpdates(commands)
@@ -474,7 +539,8 @@ public final class StackCanvas {
         let lock = stack.item(activeID)?.alphaLock == true
         if let style = strokeStyle, let mask = strokeMaskTexture, let original = strokeOriginalTexture {
             strokeTiles.formUnion(brush.encodeStroke(pending, style: style, space: blendSpace, alphaLock: lock, layer: active.texture,
-                                                     original: original, mask: mask, known: strokeTiles, commandBuffer: commands))
+                                                     original: original, mask: mask, color: strokeColorTexture, known: strokeTiles,
+                                                     commandBuffer: commands))
         } else {
             strokeTiles.formUnion(brush.encode(pending, space: blendSpace, alphaLock: lock, into: active.texture, commandBuffer: commands))
         }

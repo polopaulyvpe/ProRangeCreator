@@ -215,7 +215,7 @@ struct BrushStudioView: View {
         case .grain: grain
         case .rendering: rendering
         case .wetMix: wetMix
-        case .colorDynamics: upcoming("Variation de teinte, saturation, luminosité par tampon ou par trait, couleur secondaire : prochain lot.")
+        case .colorDynamics: colorDynamics
         case .dynamics: dynamics
         case .pencil: pencil
         case .properties: properties
@@ -280,8 +280,44 @@ struct BrushStudioView: View {
                 StudioSlider("Variation d'humidité", value: $draft.wetnessJitter, range: 0...1)
             }
             StudioCard {
-                Label("Effet sur la toile à venir", systemImage: "clock").font(.headline)
-                Text("Ces réglages sont lus et gardés avec le pinceau, mais le mélange avec la peinture déjà posée n'est pas encore calculé. Sans dilution (comme Minke), il ne change rien.")
+                Text("Le pinceau se mélange à la peinture déjà posée sur le calque : la dilution l'éclaircit et lui fait prendre la couleur de la toile, le tirage traîne cette couleur, la charge fixe la longueur avant que le pinceau soit vide (lever le stylet le recharge). Sans dilution, tirage ni flou, rien ne change. L'aperçu ci-dessous ne montre pas le mélange : essaie sur la toile.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+        }
+    }
+
+    private var colorDynamics: some View {
+        Group {
+            StudioCard {
+                Text("Variation par tampon").font(.headline)
+                StudioSlider("Teinte", value: $draft.stampHueJitter, range: 0...1)
+                StudioSlider("Saturation", value: $draft.stampSaturationJitter, range: 0...1)
+                StudioSlider("Éclaircir", value: $draft.stampLightnessJitter, range: 0...1)
+                StudioSlider("Assombrir", value: $draft.stampDarknessJitter, range: 0...1)
+                StudioSlider("Couleur secondaire", value: $draft.stampSecondaryJitter, range: 0...1)
+            }
+            StudioCard {
+                Text("Variation par trait").font(.headline)
+                StudioSlider("Teinte", value: $draft.strokeHueJitter, range: 0...1)
+                StudioSlider("Saturation", value: $draft.strokeSaturationJitter, range: 0...1)
+                StudioSlider("Éclaircir", value: $draft.strokeLightnessJitter, range: 0...1)
+                StudioSlider("Assombrir", value: $draft.strokeDarknessJitter, range: 0...1)
+                StudioSlider("Couleur secondaire", value: $draft.strokeSecondaryJitter, range: 0...1)
+            }
+            StudioCard {
+                Text("Pression").font(.headline)
+                StudioSlider("Teinte", value: $draft.pressureHue, range: 0...1)
+                StudioSlider("Saturation", value: $draft.pressureSaturation, range: 0...1)
+                StudioSlider("Luminosité", value: $draft.pressureBrightness, range: 0...1)
+                StudioSlider("Couleur secondaire", value: $draft.pressureSecondary, range: 0...1)
+            }
+            StudioCard {
+                Text("Inclinaison").font(.headline)
+                StudioSlider("Teinte", value: $draft.tiltHue, range: 0...1)
+                StudioSlider("Saturation", value: $draft.tiltSaturation, range: 0...1)
+                StudioSlider("Luminosité", value: $draft.tiltBrightness, range: 0...1)
+                StudioSlider("Couleur secondaire", value: $draft.tiltSecondary, range: 0...1)
+                Text("La couleur secondaire se choisit dans le panneau Couleur. L'aperçu montre la forme du trait, pas ses couleurs.")
                     .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
         }
@@ -458,6 +494,17 @@ struct BrushStudioView: View {
                 StudioSlider("Angle", value: $draft.tiltAngleDegrees, range: 0...89) { "\(Int($0))°" }
                 StudioSlider("Opacité", value: $draft.tiltOpacity, range: 0...1)
                 StudioSlider("Taille", value: $draft.tiltSize, range: 0...2)
+                StudioSlider("Dégradé", value: $draft.tiltGradation, range: 0...1)
+                StudioSlider("Bavure", value: $draft.tiltBleed, range: 0...1)
+                StudioSlider("Rondeur", value: $draft.tiltRoundness, range: 0...1)
+            }
+            StudioCard {
+                Text("Pression (forme)").font(.headline)
+                StudioSlider("Bavure", value: $draft.pressureBleed, range: 0...1)
+                StudioSlider("Rondeur", value: $draft.pressureRoundness, range: 0...1)
+                Toggle("La forme suit l'azimut du Pencil", isOn: $draft.azimuthRotation)
+                Text("Azimut : la forme tourne avec la direction vers laquelle penche le Pencil (au doigt, la rotation habituelle). Rondeur : la forme s'écrase à pression légère ou Pencil couché (formes importées seulement). Bavure : bord adouci et grain plus marqué.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
         }
     }

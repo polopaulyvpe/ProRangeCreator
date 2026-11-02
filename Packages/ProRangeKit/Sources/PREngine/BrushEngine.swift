@@ -31,12 +31,13 @@ public final class BrushEngine {
     struct GPUStroke {
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, mode (0 peindre, 1 effacer)
         var options: SIMD4<Float>  // plafond du principal, plafond du secondaire, combinaison (−1 aucune), espace (1 linéaire)
-        var lock: SIMD4<Float>     // verrou alpha, inutilisés
+        var lock: SIMD4<Float>     // verrou alpha, couleur par texel (texture 3), inutilisés
     }
 
     public let device: any MTLDevice
     private let pipeline: any MTLComputePipelineState
     private let maskPipeline: any MTLComputePipelineState
+    private let maskColorPipeline: any MTLComputePipelineState
     private let applyPipeline: any MTLComputePipelineState
     private let clampSampler: any MTLSamplerState
     private let repeatSampler: any MTLSamplerState
@@ -55,6 +56,7 @@ public final class BrushEngine {
         }
         self.pipeline = try pipeline("stampDab")
         maskPipeline = try pipeline("stampMask")
+        maskColorPipeline = try pipeline("stampMaskColor")
         applyPipeline = try pipeline("applyStroke")
         func sampler(_ mode: MTLSamplerAddressMode) throws -> any MTLSamplerState {
             let desc = MTLSamplerDescriptor()
@@ -195,57 +197,79 @@ public final class BrushEngine {
 
     /// Ajoute des dabs au trait en cours. `known` : tuiles déjà touchées par ce trait (leur copie d'avant et leur masque
     /// existent). Les nouvelles tuiles sont d'abord recopiées de `layer` vers `original` et leur masque remis à zéro ;
-    /// puis les dabs s'accumulent dans `mask` et les tuiles touchées sont recalculées dans `layer`. Renvoie ces tuiles.
+    /// puis les dabs s'accumulent dans `mask` (et leur couleur dans `color` pour un pinceau à couleur variable) et les
+    /// tuiles touchées sont recalculées dans `layer`. Renvoie ces tuiles.
     @discardableResult
     public func encodeStroke(_ dabs: [SphericalDab], style: StrokeStyle, space: BlendSpace, alphaLock: Bool = false,
-                             layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture, known: Set<TileCoord>,
-                             commandBuffer: any MTLCommandBuffer) -> Set<TileCoord> {
+                             layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture, color: (any MTLTexture)? = nil,
+                             known: Set<TileCoord>, commandBuffer: any MTLCommandBuffer) -> Set<TileCoord> {
         guard !dabs.isEmpty else { return [] }
         let prepared = dabs.map { prepare($0, width: layer.width, height: layer.height, space: space, alphaLock: alphaLock) }
         let touched = Set(prepared.flatMap(\.tiles))
         let fresh = touched.subtracting(known)
-        let side = TileSize.side
         if !fresh.isEmpty, let blit = commandBuffer.makeBlitCommandEncoder() {
             for coord in fresh {
-                let x = coord.x * side, y = coord.y * side
-                guard x < layer.width, y < layer.height else { continue }
-                let size = MTLSize(width: min(side, layer.width - x), height: min(side, layer.height - y), depth: 1)
-                let origin = MTLOrigin(x: x, y: y, z: 0)
-                blit.copy(from: layer, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
-                          to: original, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
-                blit.copy(from: zeroTile, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0), sourceSize: size,
-                          to: mask, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+                copyTile(coord, from: layer, to: original, blit: blit)
+                copyTile(coord, from: zeroTile, to: mask, blit: blit)
             }
             blit.endEncoding()
         }
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return [] }
-        encoder.setComputePipelineState(maskPipeline)
-        encoder.setTexture(mask, index: 0)
-        encoder.setSamplerState(clampSampler, index: 0)
-        encoder.setSamplerState(repeatSampler, index: 1)
-        dispatch(prepared, encoder: encoder)
-
-        // Recalcul des tuiles touchées : une grille de 256 × 256 par tuile (z = index de la tuile).
-        var stroke = GPUStroke(color: SIMD4<Float>(style.color.x, style.color.y, style.color.z, style.mode == .erase ? 1 : 0),
-                               options: SIMD4<Float>(style.capsPrimary ? 1 : 0, style.capsSecondary ? 1 : 0,
-                                                     Float(style.dual?.index ?? -1), space == .linear ? 1 : 0),
-                               lock: SIMD4<Float>(alphaLock ? 1 : 0, 0, 0, 0))
-        let coords = touched.map { SIMD2<Int32>(Int32($0.x), Int32($0.y)) }
-        encoder.setComputePipelineState(applyPipeline)
-        encoder.setTexture(layer, index: 0)
-        encoder.setTexture(original, index: 1)
-        encoder.setTexture(mask, index: 2)
-        encoder.setBytes(&stroke, length: MemoryLayout<GPUStroke>.stride, index: 0)
-        let bytes = coords.count * MemoryLayout<SIMD2<Int32>>.stride
-        if bytes <= 4096 {
-            coords.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: bytes, index: 1) }
-        } else if let buffer = device.makeBuffer(bytes: coords, length: bytes, options: .storageModeShared) {
-            encoder.setBuffer(buffer, offset: 0, index: 1)
-        }
-        let group = MTLSize(width: 16, height: 16, depth: 1)
-        encoder.dispatchThreadgroups(MTLSize(width: side / 16, height: side / 16, depth: coords.count), threadsPerThreadgroup: group)
+        let colors = style.varyingColor ? color : nil
+        stamp(prepared, mask: mask, color: colors, encoder: encoder)
+        apply(touched, style: style, space: space, alphaLock: alphaLock, layer: layer, original: original, mask: mask,
+              color: colors, encoder: encoder)
         encoder.endEncoding()
         return touched
+    }
+
+    /// Anticipation (touches prédites du Pencil) : pose `dabs` par-dessus le trait sans le modifier. Le masque et la couleur
+    /// des tuiles déjà touchées sont recopiés dans `scratchMask` / `scratchColor`, les dabs y sont accumulés et les tuiles
+    /// recalculées depuis ces copies ; les tuiles neuves gardent leur original comme pour un vrai dab. `revertPrediction`
+    /// remet ensuite ces tuiles dans l'état du trait. Renvoie les tuiles touchées.
+    public func encodePrediction(_ dabs: [SphericalDab], style: StrokeStyle, space: BlendSpace, alphaLock: Bool = false,
+                                 layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture, color: (any MTLTexture)?,
+                                 scratchMask: any MTLTexture, scratchColor: (any MTLTexture)?, known: Set<TileCoord>,
+                                 commandBuffer: any MTLCommandBuffer) -> Set<TileCoord> {
+        guard !dabs.isEmpty else { return [] }
+        let prepared = dabs.map { prepare($0, width: layer.width, height: layer.height, space: space, alphaLock: alphaLock) }
+        let touched = Set(prepared.flatMap(\.tiles))
+        let colors = style.varyingColor ? scratchColor : nil
+        if let blit = commandBuffer.makeBlitCommandEncoder() {
+            for coord in touched {
+                if known.contains(coord) {
+                    copyTile(coord, from: mask, to: scratchMask, blit: blit)
+                    if let colors, let color { copyTile(coord, from: color, to: colors, blit: blit) }
+                } else {
+                    copyTile(coord, from: layer, to: original, blit: blit)
+                    copyTile(coord, from: zeroTile, to: scratchMask, blit: blit)
+                }
+            }
+            blit.endEncoding()
+        }
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return [] }
+        stamp(prepared, mask: scratchMask, color: colors, encoder: encoder)
+        apply(touched, style: style, space: space, alphaLock: alphaLock, layer: layer, original: original, mask: scratchMask,
+              color: colors, encoder: encoder)
+        encoder.endEncoding()
+        return touched
+    }
+
+    /// Efface l'anticipation posée sur `tiles` : les tuiles hors du trait (`known`) reprennent leur original, les autres
+    /// sont recalculées depuis le vrai masque.
+    public func revertPrediction(tiles: Set<TileCoord>, known: Set<TileCoord>, style: StrokeStyle, space: BlendSpace,
+                                 alphaLock: Bool = false, layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture,
+                                 color: (any MTLTexture)?, commandBuffer: any MTLCommandBuffer) {
+        let outside = tiles.subtracting(known)
+        if !outside.isEmpty, let blit = commandBuffer.makeBlitCommandEncoder() {
+            for coord in outside { copyTile(coord, from: original, to: layer, blit: blit) }
+            blit.endEncoding()
+        }
+        let inside = tiles.intersection(known)
+        guard !inside.isEmpty, let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+        apply(inside, style: style, space: space, alphaLock: alphaLock, layer: layer, original: original, mask: mask,
+              color: style.varyingColor ? color : nil, encoder: encoder)
+        encoder.endEncoding()
     }
 
     /// Remet les tuiles d'un trait dans leur état d'avant le trait (copie `original` → `layer`) et vide leur masque :
@@ -253,18 +277,63 @@ public final class BrushEngine {
     public func resetStroke(tiles: Set<TileCoord>, layer: any MTLTexture, original: any MTLTexture, mask: any MTLTexture,
                             commandBuffer: any MTLCommandBuffer) {
         guard !tiles.isEmpty, let blit = commandBuffer.makeBlitCommandEncoder() else { return }
-        let side = TileSize.side
         for coord in tiles {
-            let x = coord.x * side, y = coord.y * side
-            guard x < layer.width, y < layer.height else { continue }
-            let size = MTLSize(width: min(side, layer.width - x), height: min(side, layer.height - y), depth: 1)
-            let origin = MTLOrigin(x: x, y: y, z: 0)
-            blit.copy(from: original, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
-                      to: layer, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
-            blit.copy(from: zeroTile, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0), sourceSize: size,
-                      to: mask, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+            copyTile(coord, from: original, to: layer, blit: blit)
+            copyTile(coord, from: zeroTile, to: mask, blit: blit)
         }
         blit.endEncoding()
+    }
+
+    /// Copie une tuile de `source` vers `destination` (même position ; depuis l'origine pour la tuile de zéros).
+    private func copyTile(_ coord: TileCoord, from source: any MTLTexture, to destination: any MTLTexture,
+                          blit: any MTLBlitCommandEncoder) {
+        let side = TileSize.side
+        let x = coord.x * side, y = coord.y * side
+        guard x < destination.width, y < destination.height else { return }
+        let size = MTLSize(width: min(side, destination.width - x), height: min(side, destination.height - y), depth: 1)
+        let origin = MTLOrigin(x: x, y: y, z: 0)
+        let from = source === zeroTile ? MTLOrigin(x: 0, y: 0, z: 0) : origin
+        blit.copy(from: source, sourceSlice: 0, sourceLevel: 0, sourceOrigin: from, sourceSize: size,
+                  to: destination, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+    }
+
+    /// Accumule les dabs dans `mask` (et leur couleur dans `color` s'il y en a une).
+    private func stamp(_ prepared: [Prepared], mask: any MTLTexture, color: (any MTLTexture)?,
+                       encoder: any MTLComputeCommandEncoder) {
+        encoder.setComputePipelineState(color == nil ? maskPipeline : maskColorPipeline)
+        encoder.setTexture(mask, index: 0)
+        if let color { encoder.setTexture(color, index: 3) }
+        encoder.setSamplerState(clampSampler, index: 0)
+        encoder.setSamplerState(repeatSampler, index: 1)
+        dispatch(prepared, encoder: encoder)
+    }
+
+    /// Recalcule les tuiles depuis leur original et le masque (une grille de 256 × 256 par tuile, z = index de la tuile).
+    private func apply(_ tiles: Set<TileCoord>, style: StrokeStyle, space: BlendSpace, alphaLock: Bool, layer: any MTLTexture,
+                       original: any MTLTexture, mask: any MTLTexture, color: (any MTLTexture)?,
+                       encoder: any MTLComputeCommandEncoder) {
+        guard !tiles.isEmpty else { return }
+        var stroke = GPUStroke(color: SIMD4<Float>(style.color.x, style.color.y, style.color.z, style.mode == .erase ? 1 : 0),
+                               options: SIMD4<Float>(style.capsPrimary ? 1 : 0, style.capsSecondary ? 1 : 0,
+                                                     Float(style.dual?.index ?? -1), space == .linear ? 1 : 0),
+                               lock: SIMD4<Float>(alphaLock ? 1 : 0, color == nil ? 0 : 1, 0, 0))
+        let coords = tiles.map { SIMD2<Int32>(Int32($0.x), Int32($0.y)) }
+        encoder.setComputePipelineState(applyPipeline)
+        encoder.setTexture(layer, index: 0)
+        encoder.setTexture(original, index: 1)
+        encoder.setTexture(mask, index: 2)
+        // Sans couleur par texel, le masque tient lieu de texture 3 (jamais lue).
+        encoder.setTexture(color ?? mask, index: 3)
+        encoder.setBytes(&stroke, length: MemoryLayout<GPUStroke>.stride, index: 0)
+        let bytes = coords.count * MemoryLayout<SIMD2<Int32>>.stride
+        if bytes <= 4096 {
+            coords.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: bytes, index: 1) }
+        } else if let buffer = device.makeBuffer(bytes: coords, length: bytes, options: .storageModeShared) {
+            encoder.setBuffer(buffer, offset: 0, index: 1)
+        }
+        let side = TileSize.side
+        let group = MTLSize(width: 16, height: 16, depth: 1)
+        encoder.dispatchThreadgroups(MTLSize(width: side / 16, height: side / 16, depth: coords.count), threadsPerThreadgroup: group)
     }
 
     static let source = """
@@ -407,6 +476,18 @@ public final class BrushEngine {
         return float4(toLinear3(mixed) * outA, outA);
     }
 
+    /// Ajoute un tampon d'opacité `o` et de flux `flow` au masque (voir `StrokeMask.accumulate`).
+    static void accumulateMask(thread float4& m, float o, float flow, bool secondary) {
+        float f = o * flow;
+        if (secondary) {
+            m.z += f * (1.0 - m.z);
+            m.w = max(m.w, o);
+        } else {
+            m.x += f * (1.0 - m.x);
+            m.y = max(m.y, o);
+        }
+    }
+
     static float4 lockAlpha(float4 dst, float4 original) {
         return (original.w > 0.0 && dst.w > 0.0) ? float4(dst.rgb / dst.w * original.w, original.w) : original;
     }
@@ -439,15 +520,35 @@ public final class BrushEngine {
         float a;
         if (!dabTexel(dab, int(mask.get_width()), int(mask.get_height()), gid, shape, grain, clampSampler, repeatSampler, p, a)) { return; }
         float4 m = mask.read(p);
+        accumulateMask(m, a * dab.color.w, dab.options.w, dab.options.z > 0.5);
+        mask.write(m, p);
+    }
+
+    /// Comme `stampMask`, avec la couleur du dab déposée dans `colors` (voir `StrokeMask.depositColor`).
+    kernel void stampMaskColor(texture2d<float, access::read_write> mask [[texture(0)]],
+                               texture2d<float> shape [[texture(1)]],
+                               texture2d<float> grain [[texture(2)]],
+                               texture2d<float, access::read_write> colors [[texture(3)]],
+                               sampler clampSampler [[sampler(0)]],
+                               sampler repeatSampler [[sampler(1)]],
+                               constant Dab& dab [[buffer(0)]],
+                               uint2 gid [[thread_position_in_grid]]) {
+        uint2 p;
+        float a;
+        if (!dabTexel(dab, int(mask.get_width()), int(mask.get_height()), gid, shape, grain, clampSampler, repeatSampler, p, a)) { return; }
+        float4 m = mask.read(p);
         float o = a * dab.color.w;
+        bool secondary = dab.options.z > 0.5;
         float f = o * dab.options.w;
-        if (dab.options.z > 0.5) {
-            m.z += f * (1.0 - m.z);
-            m.w = max(m.w, o);
-        } else {
-            m.x += f * (1.0 - m.x);
-            m.y = max(m.y, o);
+        if (!secondary && f > 0.0) {
+            float added = f * (1.0 - m.x);
+            float w = min(1.0, max(added / max(m.x + added, 1e-6), f));
+            // Texel vierge : la couleur est posée telle quelle (l'ancien contenu de la texture n'est jamais lu).
+            float3 c = w >= 1.0 ? dab.color.rgb : colors.read(p).rgb;
+            if (w < 1.0) { c += (dab.color.rgb - c) * w; }
+            colors.write(float4(c, 0.0), p);
         }
+        accumulateMask(m, o, dab.options.w, secondary);
         mask.write(m, p);
     }
 
@@ -455,6 +556,7 @@ public final class BrushEngine {
     kernel void applyStroke(texture2d<float, access::read_write> layer [[texture(0)]],
                             texture2d<float> original [[texture(1)]],
                             texture2d<float> mask [[texture(2)]],
+                            texture2d<float> colors [[texture(3)]],
                             constant Stroke& stroke [[buffer(0)]],
                             constant int2* tiles [[buffer(1)]],
                             uint3 gid [[thread_position_in_grid]]) {
@@ -471,7 +573,8 @@ public final class BrushEngine {
         }
         float4 dst = before;
         if (alpha > 0.0) {
-            dst = blendOver(before, stroke.color.rgb, alpha, stroke.color.w > 0.5, stroke.options.w > 0.5);
+            float3 rgb = stroke.lock.y > 0.5 ? colors.read(p).rgb : stroke.color.rgb;
+            dst = blendOver(before, rgb, alpha, stroke.color.w > 0.5, stroke.options.w > 0.5);
             if (stroke.lock.x > 0.5) { dst = lockAlpha(dst, before); }
         }
         layer.write(dst, p);

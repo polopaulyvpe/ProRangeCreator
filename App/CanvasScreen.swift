@@ -120,6 +120,8 @@ final class CanvasSession {
     var eraser = BrushSettings.defaultEraser
     /// Couleur courante, composantes encodées sRGB dans [0, 1].
     var color: SIMD3<Double> = [0.15, 0.35, 0.85]
+    /// Couleur secondaire (dynamique de couleur), en sRGB encodé comme `color`.
+    var secondaryColor: SIMD3<Double> = [0.95, 0.85, 0.3]
     var toneMapping: ToneMapping = .clip
     var exposure = 0.0
     var showColorPicker = false
@@ -195,6 +197,12 @@ final class CanvasSession {
     @ObservationIgnored var lastMoveTime: CFTimeInterval = 0
     @ObservationIgnored var strokeGrainOffset = SIMD2<Double>.zero
     @ObservationIgnored var strokeRotationOffset = 0.0
+    /// Dernier azimut connu du Pencil (dans le plan tangent), tirages de couleur du trait.
+    @ObservationIgnored var strokeAzimuth: Double?
+    @ObservationIgnored var strokeColorDraw = ColorDraw.none
+    /// Mélange humide : une réserve par copie de symétrie, et la toile d'avant le trait d'où elles prennent la couleur.
+    @ObservationIgnored private var wetMixers: [WetMixer] = []
+    @ObservationIgnored private var wetSampler: LayerSampler?
     @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
@@ -324,8 +332,10 @@ final class CanvasSession {
                             strokeAngle: strokeAngle, random: random, context: context)
     }
 
-    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0) {
+    /// `azimuth` : point d'écran (NDC) un peu plus loin dans la direction de l'azimut du Pencil (nil au doigt).
+    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, azimuth: SIMD2<Double>? = nil) {
         strokeTilt = tilt
+        strokeAzimuth = view.direction(atNDC: ndc, aspect: aspect).flatMap { azimuthAngle(at: $0, toward: azimuth, aspect: aspect) }
         let mapped = preferences.mappedPressure(pressure)
         // Stabilisation (Atelier) : un stabilisateur neuf par trait, pour les outils qui peignent.
         stabilizer = stabilizesStroke && settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer) : nil
@@ -374,7 +384,10 @@ final class CanvasSession {
         secondaryRandom = StrokeRandom(seed: UInt64.random(in: 1...UInt64.max))
         previousSecondaryCenter = nil
         strokeRecords = []
-        let first = StrokeSample(point: d, pressure: pressure, tilt: tilt)
+        strokeColorDraw = strokeRandom.colorDraw()
+        wetMixers = []
+        wetSampler = tool == .brush && settings.wetMixActive ? canvas.stack.item(canvas.activeID)?.layer.map { LayerSampler($0) } : nil
+        let first = StrokeSample(point: d, pressure: pressure, tilt: tilt, azimuth: strokeAzimuth)
         let firstDabs = brushPath.begin(first)
         let firstSecondary = secondaryPath.begin(first)
         let centers = sampler.begin(at: d)
@@ -392,8 +405,12 @@ final class CanvasSession {
         }
     }
 
-    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, alreadyMapped: Bool = false) {
+    func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, azimuth: SIMD2<Double>? = nil,
+                     alreadyMapped: Bool = false) {
         strokeTilt = tilt
+        if azimuth != nil, let raw = view.direction(atNDC: ndc, aspect: aspect) {
+            strokeAzimuth = azimuthAngle(at: raw, toward: azimuth, aspect: aspect) ?? strokeAzimuth
+        }
         let mapped = alreadyMapped ? pressure : preferences.mappedPressure(pressure)
         let (ndc, pressure) = alreadyMapped ? (ndc, mapped) : stabilize(ndc, mapped)
         lastAspect = aspect
@@ -429,7 +446,7 @@ final class CanvasSession {
             default: applyClone(centers, pressure: pressure)
             }
         default:
-            canvas.add(advancePaths(StrokeSample(point: d, pressure: pressure, tilt: tilt), finishing: false))
+            canvas.add(advancePaths(StrokeSample(point: d, pressure: pressure, tilt: tilt, azimuth: strokeAzimuth), finishing: false))
             noteQuickShapePoint(d)
         }
     }
@@ -472,15 +489,17 @@ final class CanvasSession {
             if let previous = previousDabCenter { strokeDistance += Sphere.angle(previous, center) }
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousDabCenter ?? center)
-            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: sample.tilt,
-                                        grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
+            var context = strokeContext(tilt: sample.tilt)
+            let azimuths = symmetricAzimuths(sample, images: images)
             // Plusieurs tampons par dab (Forme > Nombre) ; mêmes tirages pour toutes les copies de symétrie.
             let count = settings.stampCount(random: strokeRandom.next())
             for _ in 0..<count {
                 let random = settings.hasJitter ? strokeRandom.dab() : .none
                 for (i, image) in images.enumerated() {
                     let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
-                    let made = dab(at: image, pressure: sample.pressure, strokeAngle: angle, random: random, context: context)
+                    context.azimuth = azimuths[i]
+                    var made = dab(at: image, pressure: sample.pressure, strokeAngle: angle, random: random, context: context)
+                    if wetSampler != nil { wetMix(&made, image: i, random: random) }
                     strokeRecords.append((made, strokeDistance))
                     dabs.append(made)
                 }
@@ -503,13 +522,14 @@ final class CanvasSession {
             let center = sample.point
             let images = symmetry.images(of: center)
             let previous = symmetry.images(of: previousSecondaryCenter ?? center)
-            let context = StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: sample.tilt,
-                                        grainOffset: strokeGrainOffset, rotationOffset: strokeRotationOffset)
+            var context = strokeContext(tilt: sample.tilt)
+            let azimuths = symmetricAzimuths(sample, images: images)
             let count = secondary.stampCount(random: secondaryRandom.next())
             for _ in 0..<count {
                 let random = secondary.hasJitter ? secondaryRandom.dab() : .none
                 for (i, image) in images.enumerated() {
                     let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
+                    context.azimuth = azimuths[i]
                     var dab = secondary.dab(at: image, pressure: sample.pressure, color: linearColor, mode: mode, strokeAngle: angle,
                                             random: random, context: context)
                     dab.secondary = true
@@ -520,6 +540,77 @@ final class CanvasSession {
             previousSecondaryCenter = center
         }
         return dabs
+    }
+
+    /// Contexte d'un dab du trait en cours (l'azimut est propre à chaque copie de symétrie).
+    private func strokeContext(tilt: Double) -> StrokeContext {
+        StrokeContext(distance: strokeDistance, speed: strokeSpeed, tilt: tilt, grainOffset: strokeGrainOffset,
+                      rotationOffset: strokeRotationOffset, colorDraw: strokeColorDraw,
+                      secondaryColor: ColorTransfer.toLinear(SIMD3<Float>(secondaryColor)))
+    }
+
+    /// Azimut du Pencil pour chaque copie de symétrie : un point voisin dans la direction de l'azimut est reflété avec
+    /// le point du trait, et l'angle est relu dans le plan tangent de chaque copie (les reflets tournent dans l'autre sens).
+    private func symmetricAzimuths(_ sample: StrokeSample, images: [Vec3]) -> [Double?] {
+        guard let azimuth = sample.azimuth else { return images.map { _ in nil } }
+        guard images.count > 1 else { return [azimuth] }
+        let ahead = TangentFrame(center: sample.point).unproject([cos(azimuth) * 1e-3, sin(azimuth) * 1e-3])
+        let aheadImages = symmetry.images(of: ahead)
+        return images.indices.map { i in
+            guard i < aheadImages.count else { return azimuth }
+            return BrushSettings.strokeAngle(from: aheadImages[i], to: images[i]) + .pi
+        }
+    }
+
+    /// Azimut du Pencil au point `d` du trait : direction de `d` vers le point d'écran `toward` (en NDC), dans le plan tangent.
+    private func azimuthAngle(at d: Vec3, toward ndc: SIMD2<Double>?, aspect: Double) -> Double? {
+        guard let ndc, let ahead = view.direction(atNDC: ndc, aspect: aspect), Sphere.angle(d, ahead) > 1e-9 else { return nil }
+        return BrushSettings.strokeAngle(from: ahead, to: d) + .pi
+    }
+
+    /// Mélange humide d'un tampon du principal : la réserve de la copie `image` prend la couleur de la toile sous le tampon.
+    private func wetMix(_ dab: inout SphericalDab, image: Int, random: DabRandom) {
+        while wetMixers.count <= image { wetMixers.append(WetMixer()) }
+        let pickup = canvasColor(around: dab.center, radius: dab.radius * 0.6)
+        let wide = settings.wetBlur > 0 ? canvasColor(around: dab.center, radius: dab.radius * 2) : pickup
+        wetMixers[image].apply(&dab, brush: settings, distance: strokeDistance, pickup: pickup, wide: wide, random: random)
+    }
+
+    /// Couleur moyenne de la toile (calque actif d'avant le trait) autour de `center` : le centre et six points sur un cercle.
+    private func canvasColor(around center: Vec3, radius: Double) -> SIMD4<Float> {
+        guard let sampler = wetSampler else { return .zero }
+        let frame = TangentFrame(center: center)
+        var sum = sampler.sample(direction: center)
+        for k in 0..<6 {
+            let a = Double(k) * .pi / 3
+            sum += sampler.sample(direction: frame.unproject([cos(a) * radius, sin(a) * radius]))
+        }
+        return sum / 7
+    }
+
+    /// Anticipation : les touches prédites du Pencil (où la main sera dans quelques millisecondes) sont tracées à l'avance
+    /// et montrées une image ; le trait réel les remplace dès qu'il arrive. Sans effet sur l'état du trait.
+    func strokePredicted(_ points: [(ndc: SIMD2<Double>, pressure: Double, tilt: Double, azimuth: SIMD2<Double>?)], aspect: Double) {
+        guard let canvas, canvas.isStroking else { return }
+        guard canvas.usesFastPath, tool == .brush || tool == .eraser, stabilizer == nil, !quickShapeApplied,
+              transform == nil, distort == nil, !points.isEmpty else {
+            canvas.setPrediction([])
+            return
+        }
+        let saved = (brushPath, secondaryPath, strokeRandom, secondaryRandom, previousDabCenter, previousSecondaryCenter,
+                     strokeDistance, strokeRecords.count, wetMixers)
+        var dabs: [SphericalDab] = []
+        for point in points {
+            guard let d = view.direction(atNDC: point.ndc, aspect: aspect) else { continue }
+            let sample = StrokeSample(point: d, pressure: preferences.mappedPressure(point.pressure), tilt: point.tilt,
+                                      azimuth: azimuthAngle(at: d, toward: point.azimuth, aspect: aspect) ?? strokeAzimuth)
+            dabs += advancePaths(sample, finishing: false)
+        }
+        dabs += advancePaths(nil, finishing: true)
+        (brushPath, secondaryPath, strokeRandom, secondaryRandom, previousDabCenter, previousSecondaryCenter,
+         strokeDistance, _, wetMixers) = saved
+        strokeRecords.removeLast(strokeRecords.count - saved.7)
+        canvas.setPrediction(dabs)
     }
 
     /// Effilement de fin : au lever, le trait est repeint avec ses derniers dabs affinés (taille et opacité).
@@ -574,12 +665,14 @@ final class CanvasSession {
         if let result = canvas.endStroke(), !result.deltas.isEmpty {
             history.record(HistoryEntry(name: tool == .brush ? "Trait" : "Gomme", layerID: result.layerID, deltas: result.deltas))
         }
+        wetSampler = nil
         refreshHistory()
     }
 
     /// Second doigt posé ou pipette : le trait commencé disparaît sans laisser de trace.
     func strokeCancelled() {
         stabilizer = nil
+        wetSampler = nil
         canvas?.cancelStroke()
     }
 
@@ -772,7 +865,8 @@ final class CanvasMTKView: MTKView {
         }
         guard drawingTouch == nil, let touch = touches.first(where: canDraw) else { return }
         drawingTouch = touch
-        session.strokeBegan(ndc: ndc(point(touch)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch))
+        session.strokeBegan(ndc: ndc(point(touch)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch),
+                            azimuth: azimuth(touch))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -783,8 +877,20 @@ final class CanvasMTKView: MTKView {
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
-            session.strokeMoved(ndc: ndc(point(t)), aspect: aspect, pressure: pressure(t), tilt: tilt(t))
+            session.strokeMoved(ndc: ndc(point(t)), aspect: aspect, pressure: pressure(t), tilt: tilt(t), azimuth: azimuth(t))
         }
+        // Anticipation : le trait est prolongé jusqu'où UIKit prévoit le Pencil (une image d'avance sur la main).
+        let predicted = touch.type == .pencil ? event?.predictedTouches(for: touch) ?? [] : []
+        session.strokePredicted(predicted.map { (ndc: ndc(point($0)), pressure: pressure($0), tilt: tilt($0), azimuth: azimuth($0)) },
+                                aspect: aspect)
+    }
+
+    /// Point d'écran (NDC) à 12 points du Pencil dans la direction de son azimut ; nil au doigt.
+    private func azimuth(_ touch: UITouch) -> SIMD2<Double>? {
+        guard touch.type == .pencil else { return nil }
+        let v = touch.azimuthUnitVector(in: self)
+        let p = point(touch)
+        return ndc(CGPoint(x: p.x + v.dx * 12, y: p.y + v.dy * 12))
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {

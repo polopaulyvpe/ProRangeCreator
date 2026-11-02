@@ -1,15 +1,27 @@
 import simd
 
-/// Point saisi d'un trait : position (direction sur la sphère, ou point du plan avec z = 0), pression et inclinaison.
+/// Point saisi d'un trait : position (direction sur la sphère, ou point du plan avec z = 0), pression, inclinaison et
+/// azimut du Pencil (direction vers laquelle il penche, dans le plan tangent : radians depuis l'est local ; nil au doigt).
 public struct StrokeSample: Sendable, Equatable {
     public var point: Vec3
     public var pressure: Double
     public var tilt: Double
+    public var azimuth: Double?
 
-    public init(point: Vec3, pressure: Double, tilt: Double = 0) {
+    public init(point: Vec3, pressure: Double, tilt: Double = 0, azimuth: Double? = nil) {
         self.point = point
         self.pressure = pressure
         self.tilt = tilt
+        self.azimuth = azimuth
+    }
+
+    /// Angle interpolé par le plus court chemin.
+    static func interpolatedAzimuth(_ a: Double?, _ b: Double?, _ u: Double) -> Double? {
+        guard let a, let b else { return b ?? a }
+        var delta = (b - a).truncatingRemainder(dividingBy: 2 * .pi)
+        if delta > .pi { delta -= 2 * .pi }
+        if delta < -.pi { delta += 2 * .pi }
+        return a + delta * u
     }
 }
 
@@ -47,6 +59,7 @@ public struct SplineStrokeSampler: Sendable {
         if simd_distance(last.point, sample.point) < 1e-9 {
             points[points.count - 1].pressure = sample.pressure
             points[points.count - 1].tilt = sample.tilt
+            points[points.count - 1].azimuth = sample.azimuth
             return []
         }
         points.append(sample)
@@ -110,7 +123,8 @@ public struct SplineStrokeSampler: Sendable {
                 if onSphere { q = simd_normalize(q) }
                 let uq = fromU + (u - fromU) * f
                 let sample = StrokeSample(point: q, pressure: a.pressure + (b.pressure - a.pressure) * uq,
-                                          tilt: a.tilt + (b.tilt - a.tilt) * uq)
+                                          tilt: a.tilt + (b.tilt - a.tilt) * uq,
+                                          azimuth: StrokeSample.interpolatedAzimuth(a.azimuth, b.azimuth, uq))
                 out.append(sample)
                 length -= simd_distance(from, q)
                 from = q

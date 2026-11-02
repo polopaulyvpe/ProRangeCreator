@@ -128,7 +128,7 @@ public enum ProcreateBrushImport {
     }
 
     /// Clés reconnues (noms relevés dans de vrais fichiers Procreate, version 4 du format), avec leur traduction.
-    static let knownKeys: Set<String> = [
+    static let knownKeys: Set<String> = Set([
         "name", "maxSize", "minSize", "maxOpacity", "plotSpacing", "plotSpacingJitter", "plotJitter",
         "dynamicsJitterSize", "dynamicsJitterOpacity", "shapeScatter", "shapeFlipXJitter", "shapeFlipYJitter",
         "shapeAngle", "shapeRotation", "dynamicsPressureSize", "dynamicsPressureOpacity", "textureScale",
@@ -145,7 +145,23 @@ public enum ProcreateBrushImport {
         "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
         "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
         "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter", "jitterShapeRoundness", "jitterShapeRoundnessX",
-    ]
+    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth"])
+
+    /// Dynamique de couleur et Apple Pencil : clé Procreate → réglage (valeurs de l'archive dans [0, 1]).
+    static var colorAndPencilKeys: [(String, WritableKeyPath<BrushSettings, Double>)] { [
+        ("dynamicsJitterHue", \.stampHueJitter), ("dynamicsJitterSaturation", \.stampSaturationJitter),
+        ("dynamicsJitterLightness", \.stampLightnessJitter), ("dynamicsJitterDarkness", \.stampDarknessJitter),
+        ("dynamicsJitterSecondaryColor", \.stampSecondaryJitter),
+        ("dynamicsJitterStrokeHue", \.strokeHueJitter), ("dynamicsJitterStrokeSaturation", \.strokeSaturationJitter),
+        ("dynamicsJitterStrokeLightness", \.strokeLightnessJitter), ("dynamicsJitterStrokeDarkness", \.strokeDarknessJitter),
+        ("dynamicsJitterStrokeSecondaryColor", \.strokeSecondaryJitter),
+        ("dynamicsPressureHue", \.pressureHue), ("dynamicsPressureSaturation", \.pressureSaturation),
+        ("dynamicsPressureBrightness", \.pressureBrightness), ("dynamicsPressureSecondaryColor", \.pressureSecondary),
+        ("dynamicsTiltHue", \.tiltHue), ("dynamicsTiltSaturation", \.tiltSaturation),
+        ("dynamicsTiltBrightness", \.tiltBrightness), ("dynamicsTiltSecondaryColor", \.tiltSecondary),
+        ("dynamicsPressureBleed", \.pressureBleed), ("dynamicsTiltBleed", \.tiltBleed), ("dynamicsTiltGradation", \.tiltGradation),
+        ("dynamicsPressureShapeRoundness", \.pressureRoundness), ("dynamicsTiltShapeRoundness", \.tiltRoundness),
+    ] }
 
     /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
     static func parseArchive(_ data: Data, fallbackName: String) -> BrushPreset {
@@ -339,6 +355,20 @@ public enum ProcreateBrushImport {
                             ("dynamicsMixSoftening", \BrushSettings.wetGrade), ("dynamicsBlur", \BrushSettings.wetBlur),
                             ("dynamicsBlurJitter", \BrushSettings.wetBlurJitter), ("dynamicsWetnessJitter", \BrushSettings.wetnessJitter)] {
             if let v = number(key) { settings[keyPath: path] = min(1, max(0, v)) }
+        }
+        // Dynamique de couleur, bavure, dégradé, rondeur selon la pression et l'inclinaison, azimut.
+        var colorAndPencil: [String] = []
+        for (key, path) in colorAndPencilKeys {
+            if let v = number(key), v != 0 {
+                settings[keyPath: path] = min(1, max(-1, v))
+                colorAndPencil.append(key)
+            }
+        }
+        if settings.hasColorDynamics { mapped.append("dynamique de couleur") }
+        if !colorAndPencil.isEmpty, !settings.hasColorDynamics { mapped.append("réglages Apple Pencil") }
+        if (brush["shapeAzimuth"] as? Bool) == true || (number("shapeAzimuth") ?? 0) > 0 {
+            settings.azimuthRotation = true
+            mapped.append("forme qui suit l'azimut du Pencil")
         }
         if let rotation = number("textureRotation"), rotation != 0 {
             settings.grainRotationDegrees = abs(rotation) <= 1 ? rotation * 180 : rotation
@@ -564,6 +594,16 @@ public enum NativeBrushFile {
         ("roundnessJitter", \.roundnessJitter), ("roundnessJitterX", \.roundnessJitterX), ("longitudinalJitter", \.longitudinalJitter), ("speedSpacing", \.speedSpacing), ("grainMovement", \.grainMovement),
         ("wetDilution", \.wetDilution), ("wetCharge", \.wetCharge), ("wetAttack", \.wetAttack), ("wetPull", \.wetPull),
         ("wetGrade", \.wetGrade), ("wetBlur", \.wetBlur), ("wetBlurJitter", \.wetBlurJitter), ("wetnessJitter", \.wetnessJitter),
+        ("stampHueJitter", \.stampHueJitter), ("stampSaturationJitter", \.stampSaturationJitter),
+        ("stampLightnessJitter", \.stampLightnessJitter), ("stampDarknessJitter", \.stampDarknessJitter),
+        ("stampSecondaryJitter", \.stampSecondaryJitter), ("strokeHueJitter", \.strokeHueJitter),
+        ("strokeSaturationJitter", \.strokeSaturationJitter), ("strokeLightnessJitter", \.strokeLightnessJitter),
+        ("strokeDarknessJitter", \.strokeDarknessJitter), ("strokeSecondaryJitter", \.strokeSecondaryJitter),
+        ("pressureHue", \.pressureHue), ("pressureSaturation", \.pressureSaturation), ("pressureBrightness", \.pressureBrightness),
+        ("pressureSecondary", \.pressureSecondary), ("tiltHue", \.tiltHue), ("tiltSaturation", \.tiltSaturation),
+        ("tiltBrightness", \.tiltBrightness), ("tiltSecondary", \.tiltSecondary),
+        ("pressureRoundness", \.pressureRoundness), ("tiltRoundness", \.tiltRoundness), ("pressureBleed", \.pressureBleed),
+        ("tiltBleed", \.tiltBleed), ("tiltGradation", \.tiltGradation),
     ] }
 
     /// Courbes de pression, par nom (seules les courbes non linéaires sont écrites).
@@ -574,7 +614,7 @@ public enum NativeBrushFile {
     /// Réglages oui / non de l'Atelier, par nom.
     static var flagKeys: [(String, WritableKeyPath<BrushSettings, Bool>)] { [
         ("randomizeRotation", \.randomizeRotation), ("grainMoving", \.grainMoving),
-        ("grainOffsetJitter", \.grainOffsetJitter), ("grainInverted", \.grainInverted),
+        ("grainOffsetJitter", \.grainOffsetJitter), ("grainInverted", \.grainInverted), ("azimuthRotation", \.azimuthRotation),
     ] }
 
     static func encode(_ texture: BrushTexture?) -> Texture? {

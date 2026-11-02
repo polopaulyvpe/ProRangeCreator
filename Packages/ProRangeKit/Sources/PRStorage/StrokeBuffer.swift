@@ -4,6 +4,8 @@ import PRCore
 /// (comme la texture du kernel GPU) et les pixels d'avant le trait, d'où chaque texel est recalculé.
 public final class StrokeBuffer {
     var masks: [TileCoord: [SIMD4<Float16>]] = [:]
+    /// Couleur du trait par texel (RGB, w inutilisé), pour un pinceau à couleur variable (`StrokeStyle.varyingColor`).
+    var colors: [TileCoord: [SIMD4<Float16>]] = [:]
     /// Pixels bruts de la tuile au premier passage du trait (format du calque).
     var originals: [TileCoord: [UInt8]] = [:]
 

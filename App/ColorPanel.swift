@@ -87,6 +87,23 @@ struct ColorPanel: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.3)))
                 }
                 .buttonStyle(.plain)
+                // Couleur secondaire (dynamique de couleur des pinceaux) : toucher l'échange avec la couleur principale.
+                Button {
+                    let primary = session.color
+                    set(session.secondaryColor)
+                    session.secondaryColor = primary
+                } label: {
+                    ZStack {
+                        Circle().fill(swatch(session.secondaryColor)).frame(width: 34, height: 34)
+                            .overlay(Circle().stroke(.white.opacity(0.3)))
+                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white).shadow(radius: 2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Couleur actuelle en secondaire", systemImage: "square.on.square") { session.secondaryColor = session.color }
+                }
             }
             Group {
                 switch tab {
