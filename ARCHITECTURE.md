@@ -235,7 +235,15 @@ Fichier binaire en ajout seul, de la forme `[tag][longueur][JSON]` (trait, gomme
   - clés reprises : maxSize/paintSize, minSize, maxOpacity/paintOpacity, plotSpacing (fraction du diamètre → du rayon), dynamicsPressureSize/Opacity, shapeRotation, shapeOrientation, textureScale/grainScale, textureDepth/grainDepth, hardness ;
   - toutes les autres clés sont listées comme ignorées dans le compte rendu d'import. Les noms de clés viennent de la rétro-ingénierie communautaire, **non vérifiés sur de vrais fichiers** ;
   - **image PNG** (ou autre) comme forme ou grain : luminance encodée, ou alpha si l'image a de la transparence, recadrée en carré ≤ 512, avec inversion au choix.
-- Non gérés : jitter, dynamique de vitesse et d'inclinaison, mélange et humidité, double forme, `.abr` (D9).
+- Non gérés : `.abr` (D9). Le reste (variations, vitesse, inclinaison, pinceau double, rendu) est arrivé ensuite : voir ci-dessous et `docs/QUALITE-PINCEAUX.md`.
+
+### Trait : masque, couleur, anticipation (2026-10-31 → 11-02)
+
+- Pinceau et gomme accumulent leurs dabs dans un **masque de trait** (`StrokeMask` sur CPU, `stampMask` sur GPU), puis chaque tuile touchée est recalculée depuis sa copie d'avant le trait (`applyStroke`).
+- **Pinceau à couleur variable** (`BrushSettings.varyingColor` : dynamique de couleur ou mélange humide) : une texture de couleur par texel en plus (`stampMaskColor`, `StrokeMask.depositColor`).
+- **Dynamique de couleur** (`ColorDynamics`) et **mélange humide** (`WetMixer`) changent la couleur de chaque dab sur le CPU, avant l'envoi au GPU. Le mélange lit le calque CPU d'avant le trait (`LayerSampler`).
+- **Apple Pencil** : azimut (angle relu dans le plan tangent de chaque copie de symétrie), rondeur, bavure et dégradé dans `BrushSettings.dab`.
+- **Anticipation** : `StackCanvas.setPrediction` ; à chaque image : effacer l'anticipation (`revertPrediction`), poser les dabs réels, reposer l'anticipation (`encodePrediction`, dans une copie du masque). La session calcule les dabs prédits sur des copies de l'état du trait (courbes, tirages, distance, réserves), restaurées ensuite.
 
 ### Timelapse (phase 7, lot C)
 
