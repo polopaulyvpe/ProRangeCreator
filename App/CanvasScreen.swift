@@ -118,6 +118,9 @@ final class CanvasSession {
     var tool: PaintTool = .brush
     var brush = BrushSettings.defaultBrush
     var eraser = BrushSettings.defaultEraser
+    /// Fichier de « Mes pinceaux » d'où viennent le pinceau et la gomme (nil : pinceau intégré ou jamais enregistré).
+    var brushFile: URL?
+    var eraserFile: URL?
     /// Couleur courante, composantes encodées sRGB dans [0, 1].
     var color: SIMD3<Double> = [0.15, 0.35, 0.85]
     /// Couleur secondaire (dynamique de couleur), en sRGB encodé comme `color`.
@@ -225,6 +228,12 @@ final class CanvasSession {
     var settings: BrushSettings {
         get { tool == .brush ? brush : eraser }
         set { if tool == .brush { brush = newValue } else { eraser = newValue } }
+    }
+
+    /// Fichier de l'outil courant, comme `settings`.
+    var settingsFile: URL? {
+        get { tool == .brush ? brushFile : eraserFile }
+        set { if tool == .brush { brushFile = newValue } else { eraserFile = newValue } }
     }
 
     // MARK: - Vues

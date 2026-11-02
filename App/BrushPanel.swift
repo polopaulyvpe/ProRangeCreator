@@ -16,6 +16,11 @@ enum StrokePreview {
         return image
     }
 
+    /// Oublie l'aperçu d'un pinceau de « Mes pinceaux » réenregistré sous le même fichier.
+    static func forget(file url: URL) {
+        cache["mes/\(url.lastPathComponent)"] = nil
+    }
+
     /// Même calcul que la toile (`FlatBrushPainter`), rayon de 15 pixels (22 pour un tampon).
     static func render(_ s: BrushSettings) -> CGImage? {
         FlatBrushPainter.preview(s, width: width, height: height, radiusPixels: s.spacing >= 10 ? 22 : 15)
@@ -27,6 +32,8 @@ struct BrushEntry: Identifiable {
     let id: String
     let name: String
     let settings: BrushSettings
+    /// Fichier de « Mes pinceaux » (nil pour un pinceau intégré).
+    var file: URL? = nil
 }
 
 /// Bibliothèque de pinceaux : catégories à gauche, aperçus de traits à droite (même organisation que Procreate).
@@ -58,7 +65,7 @@ struct BrushPanel: View {
              BrushEntry(id: "base/encre", name: "Encre", settings: Self.ink),
              BrushEntry(id: "base/gomme", name: "Gomme douce", settings: BrushSettings.defaultEraser)]
         case "Mes pinceaux":
-            saved.map { BrushEntry(id: "mes/\($0.url.lastPathComponent)", name: $0.preset.name, settings: $0.preset.settings) }
+            saved.map { BrushEntry(id: "mes/\($0.url.lastPathComponent)", name: $0.preset.name, settings: $0.preset.settings, file: $0.url) }
         default:
             BuiltInBrushes.all.filter { $0.category == category }.map { BrushEntry(id: $0.id, name: $0.name, settings: $0.settings) }
         }
@@ -106,6 +113,7 @@ struct BrushPanel: View {
                         ForEach(entries) { entry in
                             Button {
                                 session.settings = entry.settings
+                                session.settingsFile = entry.file
                                 session.showToast(entry.name)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -123,6 +131,7 @@ struct BrushPanel: View {
                             .contextMenu {
                                 Button("Modifier dans l'Atelier", systemImage: "slider.horizontal.3") {
                                     session.settings = entry.settings
+                                    session.settingsFile = entry.file
                                     session.showBrushes = false
                                     session.showBrushStudio = true
                                 }

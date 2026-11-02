@@ -74,6 +74,10 @@ struct BrushStudioView: View {
     @State private var showImporter = false
     /// Pinceau double : pendant qu'on règle le secondaire, `draft` est le secondaire et le principal attend ici.
     @State private var parkedPrimary: BrushSettings?
+    /// Fichier de « Mes pinceaux » modifié (nil : pinceau intégré, « Enregistrer » en crée un).
+    @State private var file: URL?
+    @State private var askingCopyName = false
+    @State private var copyName = ""
 
     /// Le pinceau complet (principal avec son secondaire), tel qu'il sera appliqué.
     private var combined: BrushSettings {
@@ -97,6 +101,37 @@ struct BrushStudioView: View {
         var settings = session.settings
         if settings.grainSource == nil { settings.grainSource = settings.grain }
         _draft = State(initialValue: settings)
+        _file = State(initialValue: session.settingsFile)
+    }
+
+    /// Change le nom du pinceau complet (le principal, même pendant qu'on règle le secondaire).
+    private func rename(_ name: String) {
+        if parkedPrimary != nil { parkedPrimary?.name = name } else { draft.name = name }
+    }
+
+    /// Enregistre dans le fichier d'origine, ou crée l'entrée de « Mes pinceaux » pour un pinceau intégré.
+    private func save() {
+        let brush = combined
+        let preset = BrushPreset(name: brush.name, settings: brush)
+        let saved = if let file { session.overwriteBrush(preset, at: file) } else { session.saveBrush(preset) }
+        guard let url = saved else { return }
+        file = url
+        session.settings = brush
+        session.settingsFile = url
+        session.showToast("« \(brush.name) » enregistré")
+    }
+
+    /// Nouvelle entrée de « Mes pinceaux » sous un autre nom ; l'Atelier continue sur la copie, l'original reste intact.
+    private func saveCopy(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        rename(trimmed)
+        let brush = combined
+        guard let url = session.saveBrush(BrushPreset(name: trimmed, settings: brush)) else { return }
+        file = url
+        session.settings = brush
+        session.settingsFile = url
+        session.showToast("Copie « \(trimmed) » enregistrée")
     }
 
     var body: some View {
@@ -186,6 +221,26 @@ struct BrushStudioView: View {
                         .background(Capsule().stroke(Color.white.opacity(0.2)))
                 }
                 Spacer()
+                Menu {
+                    Button(file == nil ? "Enregistrer dans Mes pinceaux" : "Enregistrer « \(combined.name) »",
+                           systemImage: "square.and.arrow.down") { save() }
+                    Button("Enregistrer une copie…", systemImage: "plus.square.on.square") {
+                        copyName = "\(combined.name) copie"
+                        askingCopyName = true
+                    }
+                } label: {
+                    Label("Enregistrer", systemImage: "square.and.arrow.down")
+                        .font(.system(size: 18, weight: .semibold))
+                        .padding(.horizontal, 18).padding(.vertical, 11)
+                        .background(Capsule().stroke(Color.white.opacity(0.2)))
+                }
+                .alert("Enregistrer une copie", isPresented: $askingCopyName) {
+                    TextField("Nom du pinceau", text: $copyName)
+                    Button("Annuler", role: .cancel) {}
+                    Button("Enregistrer") { saveCopy(named: copyName) }
+                } message: {
+                    Text("La copie rejoint Mes pinceaux ; le pinceau d'origine ne change pas.")
+                }
                 Button("Annuler") { dismiss() }
                     .font(.system(size: 18))
                     .padding(.horizontal, 18).padding(.vertical, 11)
@@ -557,10 +612,15 @@ struct BrushStudioView: View {
                 }
             }
             StudioCard {
-                Button("Enregistrer dans Mes pinceaux", systemImage: "square.and.arrow.down") {
-                    session.saveBrush(BrushPreset(name: combined.name, settings: combined))
-                    session.showToast("« \(combined.name) » enregistré")
+                Button(file == nil ? "Enregistrer dans Mes pinceaux" : "Enregistrer « \(combined.name) »",
+                       systemImage: "square.and.arrow.down") { save() }
+                Button("Enregistrer une copie…", systemImage: "plus.square.on.square") {
+                    copyName = "\(combined.name) copie"
+                    askingCopyName = true
                 }
+                Text(file == nil ? "Pinceau intégré : « Enregistrer » le copie dans Mes pinceaux."
+                                 : "« Enregistrer » remplace ce pinceau dans Mes pinceaux (renommé si le nom a changé).")
+                    .font(.caption).foregroundStyle(.white.opacity(0.6))
             }
         }
     }

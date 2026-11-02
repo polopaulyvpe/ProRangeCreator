@@ -53,6 +53,25 @@ extension CanvasSession {
         }
     }
 
+    /// Remplace un pinceau de la bibliothèque. Si le nom a changé, le fichier est renommé (un nom déjà pris est numéroté).
+    @discardableResult
+    func overwriteBrush(_ preset: BrushPreset, at url: URL) -> URL? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return saveBrush(preset) }
+        let old = (try? Data(contentsOf: url)).flatMap { try? NativeBrushFile.preset(from: $0) }
+        if let old, old.name != preset.name {
+            try? FileManager.default.removeItem(at: url)
+            return saveBrush(preset)
+        }
+        do {
+            try NativeBrushFile.data(preset).write(to: url, options: .atomic)
+            StrokePreview.forget(file: url)
+            return url
+        } catch {
+            fileMessage = "Pinceau non enregistré : \(error)"
+            return nil
+        }
+    }
+
     /// .brush, .brushset (Procreate) ou .prbrush : ajoutés à la bibliothèque ; renvoie les pinceaux lus pour le compte rendu.
     func importBrushFiles(_ urls: [URL]) -> [BrushPreset] {
         var imported: [BrushPreset] = []
@@ -172,6 +191,7 @@ struct BrushLibrarySheet: View {
                         ForEach(BuiltInBrushes.all.filter { $0.category == category }) { builtIn in
                             Button {
                                 session.settings = builtIn.settings
+                                session.settingsFile = nil
                                 dismiss()
                             } label: {
                                 HStack {
@@ -189,6 +209,7 @@ struct BrushLibrarySheet: View {
                     ForEach(brushes) { brush in
                         Button {
                             session.settings = brush.preset.settings
+                            session.settingsFile = brush.url
                             dismiss()
                         } label: {
                             VStack(alignment: .leading) {
@@ -204,7 +225,10 @@ struct BrushLibrarySheet: View {
                     HStack {
                         TextField("Nom", text: $newName)
                         Button("Enregistrer le pinceau actuel") {
-                            session.saveBrush(BrushPreset(name: newName, settings: session.settings))
+                            var settings = session.settings
+                            settings.name = newName
+                            session.settings = settings
+                            session.settingsFile = session.saveBrush(BrushPreset(name: newName, settings: settings))
                             brushes = session.listBrushes()
                         }
                     }
