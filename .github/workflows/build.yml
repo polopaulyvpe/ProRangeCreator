@@ -17,7 +17,7 @@ defaults:
 jobs:
   test:
     name: Tests des packages (swift test)
-    runs-on: macos-15-intel  # temporaire : arm64 saturé chez GitHub (voir DECISIONS.md)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
@@ -34,8 +34,9 @@ jobs:
 
   ipa:
     name: App iPad non signée (.ipa)
-    needs: test
-    runs-on: macos-15-intel  # temporaire : arm64 saturé chez GitHub (voir DECISIONS.md)
+    # Temporaire (voir DECISIONS.md) : arm64 saturé chez GitHub. Le .ipa se compile sur Intel (cible iOS arm64) sans
+    # attendre les tests, qui ne tournent pas sur Mac Intel (pas de Float16 en x86_64).
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
@@ -65,3 +66,13 @@ jobs:
           path: ProRangeCreator.ipa
           # Dépôt public : l'.ipa ne reste téléchargeable qu'un jour (le temps de le récupérer).
           retention-days: 1
+      # Temporaire : sans Mac arm64, on vérifie au moins que les tests compilent (pour iPad, sans les lancer).
+      - name: Compiler les tests pour iPadOS
+        working-directory: Packages/ProRangeKit
+        run: |
+          xcodebuild -list
+          xcodebuild build-for-testing \
+            -scheme ProRangeKit-Package \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ../../build-tests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
