@@ -145,7 +145,8 @@ public enum ProcreateBrushImport {
         "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
         "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
         "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter", "jitterShapeRoundness", "jitterShapeRoundnessX",
-    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth"])
+    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth", "shapeInverted", "dynamicsPressureShapeRoundness",
+        "dynamicsPressureShapeRoundnessMinimum", "dynamicsTiltShapeRoundness", "dynamicsTiltShapeRoundnessMinimum"])
 
     /// Dynamique de couleur et Apple Pencil : clé Procreate → réglage (valeurs de l'archive dans [0, 1]).
     static var colorAndPencilKeys: [(String, WritableKeyPath<BrushSettings, Double>)] { [
@@ -160,25 +161,29 @@ public enum ProcreateBrushImport {
         ("dynamicsTiltHue", \.tiltHue), ("dynamicsTiltSaturation", \.tiltSaturation),
         ("dynamicsTiltBrightness", \.tiltBrightness), ("dynamicsTiltSecondaryColor", \.tiltSecondary),
         ("dynamicsPressureBleed", \.pressureBleed), ("dynamicsTiltBleed", \.tiltBleed), ("dynamicsTiltGradation", \.tiltGradation),
-        ("dynamicsPressureShapeRoundness", \.pressureRoundness), ("dynamicsTiltShapeRoundness", \.tiltRoundness),
     ] }
 
-    /// Lit les réglages numériques de l'objet racine de l'archive (le dictionnaire qui porte le plus de clés connues).
+    /// Objet racine du pinceau (le dictionnaire qui porte le plus de clés connues) et la table des objets de l'archive.
+    static func brushDictionary(_ data: Data) -> (brush: [String: Any], objects: [Any])? {
+        guard let root = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let objects = root["$objects"] as? [Any] else { return nil }
+        let dictionaries = objects.compactMap { $0 as? [String: Any] }
+        guard let brush = dictionaries.max(by: { a, b in
+            a.keys.filter(knownKeys.contains).count < b.keys.filter(knownKeys.contains).count
+        }) else { return nil }
+        return (brush, objects)
+    }
+
+    /// Lit les réglages numériques de l'objet racine de l'archive.
     static func parseArchive(_ data: Data, fallbackName: String) -> BrushPreset {
         var settings = BrushSettings.defaultBrush
         var mapped: [String] = []
         var ignored: [String] = []
         var name = fallbackName
-        guard let root = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let objects = root["$objects"] as? [Any] else {
+        guard let parsed = brushDictionary(data) else {
             return BrushPreset(name: name, settings: settings, ignored: ["Brush.archive illisible"])
         }
-        let dictionaries = objects.compactMap { $0 as? [String: Any] }
-        guard let brush = dictionaries.max(by: { a, b in
-            a.keys.filter(knownKeys.contains).count < b.keys.filter(knownKeys.contains).count
-        }) else {
-            return BrushPreset(name: name, settings: settings, ignored: ["aucun réglage trouvé"])
-        }
+        let brush = parsed.brush, objects = parsed.objects
         func number(_ key: String) -> Double? { (brush[key] as? NSNumber)?.doubleValue }
         /// Chaîne directe ou référencée ; nil pour « $null ».
         func string(_ key: String) -> String? {
@@ -364,6 +369,16 @@ public enum ProcreateBrushImport {
                 colorAndPencil.append(key)
             }
         }
+        // Rondeur selon la pression / l'inclinaison : la forme s'écrase au plus jusqu'à son minimum
+        // (Minke : effet 100 %, minimum 100 % → aucun écrasement).
+        for (key, path) in [("dynamicsPressureShapeRoundness", \BrushSettings.pressureRoundness),
+                            ("dynamicsTiltShapeRoundness", \BrushSettings.tiltRoundness)] {
+            if let v = number(key), v > 0 {
+                let minimum = min(1, max(0, number(key + "Minimum") ?? 0))
+                settings[keyPath: path] = min(1, v) * (1 - minimum)
+                if settings[keyPath: path] > 0 { colorAndPencil.append(key) }
+            }
+        }
         if settings.hasColorDynamics { mapped.append("dynamique de couleur") }
         if !colorAndPencil.isEmpty, !settings.hasColorDynamics { mapped.append("réglages Apple Pencil") }
         if (brush["shapeAzimuth"] as? Bool) == true || (number("shapeAzimuth") ?? 0) > 0 {
@@ -498,8 +513,10 @@ public enum ProcreateBrushImport {
         let plist = try zip.data(archive)
         var preset = parseArchive(Data(plist), fallbackName: fallbackName)
         if let shape = image("shape.png") {
-            preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme")
-            preset.mapped.append("Shape.png → forme")
+            // « Inverser la forme » (Atelier > Forme) : l'image est stockée telle quelle, Procreate l'inverse au rendu.
+            let inverted = (brushDictionary(Data(plist))?.brush["shapeInverted"] as? Bool) == true
+            preset.settings.shape = BrushTextureImport.texture(from: shape, name: "\(preset.name) — forme", invert: inverted)
+            preset.mapped.append("Shape.png → forme" + (inverted ? " (inversée)" : ""))
         }
         if let grain = image("grain.png") {
             preset.settings.grainSource = BrushTextureImport.texture(from: grain, name: "\(preset.name) — grain")

@@ -86,6 +86,8 @@ final class PaintDynamicsTests: XCTestCase {
     func testPullTakesCanvasColor() {
         var brush = BrushSettings()
         brush.wetPull = 1
+        XCTAssertFalse(brush.wetMixActive, "sans dilution, le tirage n'agit pas")
+        brush.wetDilution = 0.05
         XCTAssertTrue(brush.wetMixActive)
         var mixer = WetMixer()
         let canvas = SIMD4<Float>(yellow.x, yellow.y, yellow.z, 1)

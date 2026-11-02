@@ -280,7 +280,7 @@ struct BrushStudioView: View {
                 StudioSlider("Variation d'humidité", value: $draft.wetnessJitter, range: 0...1)
             }
             StudioCard {
-                Text("Le pinceau se mélange à la peinture déjà posée sur le calque : la dilution l'éclaircit et lui fait prendre la couleur de la toile, le tirage traîne cette couleur, la charge fixe la longueur avant que le pinceau soit vide (lever le stylet le recharge). Sans dilution, tirage ni flou, rien ne change. L'aperçu ci-dessous ne montre pas le mélange : essaie sur la toile.")
+                Text("Le pinceau se mélange à la peinture déjà posée sur le calque : la dilution l'éclaircit et lui fait prendre la couleur de la toile, le tirage traîne cette couleur, la charge fixe la longueur avant que le pinceau soit vide (lever le stylet le recharge). Comme dans Procreate, tout part de la dilution : à 0 (et sans flou), les autres réglages n'ont aucun effet. L'aperçu ci-dessous ne montre pas le mélange : essaie sur la toile.")
                     .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
         }

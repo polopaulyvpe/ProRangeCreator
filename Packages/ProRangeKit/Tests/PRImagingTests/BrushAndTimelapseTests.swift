@@ -56,7 +56,18 @@ final class FakeDualBrush: NSObject, NSCoding {
         coder.encode(secondary ? 0.8 : 0.4, forKey: "maxSize")
         coder.encode(0.1, forKey: "plotSpacing")
         coder.encode(1.0, forKey: "dynamicsPressureSize")
-        guard !secondary else { return }
+        // Valeurs de Minke : rondeur selon la pression et l'inclinaison neutralisée par son minimum.
+        coder.encode(1.0, forKey: "dynamicsPressureShapeRoundness")
+        coder.encode(1.0, forKey: "dynamicsPressureShapeRoundnessMinimum")
+        coder.encode(1.0, forKey: "dynamicsTiltShapeRoundness")
+        coder.encode(secondary ? 0.4 : 1.0, forKey: "dynamicsTiltShapeRoundnessMinimum")
+        guard !secondary else {
+            coder.encode(true, forKey: "shapeInverted")
+            return
+        }
+        coder.encode(0.0, forKey: "dynamicsMix")
+        coder.encode(0.2, forKey: "dynamicsPressureMix")
+        coder.encode(0.1, forKey: "dynamicsWetAccumulation")
         coder.encode(20.0, forKey: "dualBlendMode")
         coder.encode(0.25, forKey: "dynamicsPressureOpacityTransfer")
         coder.encode(0.1, forKey: "dynamicsPressureOpacity")
@@ -82,7 +93,9 @@ final class BrushAndTimelapseTests: XCTestCase {
     func testDualBrushCurvesAndFlowImport() throws {
         let primary = try NSKeyedArchiver.archivedData(withRootObject: FakeDualBrush(secondary: false), requiringSecureCoding: false)
         let secondary = try NSKeyedArchiver.archivedData(withRootObject: FakeDualBrush(secondary: true), requiringSecureCoding: false)
-        let data = zip([("Brush.archive", [UInt8](primary)), ("Sub01/Brush.archive", [UInt8](secondary)),
+        let png = try shapePNG()
+        let data = zip([("Brush.archive", [UInt8](primary)), ("Shape.png", png), ("Sub01/Brush.archive", [UInt8](secondary)),
+                        ("Sub01/Shape.png", png),
                         ("Reset/Brush.archive", [UInt8](primary)), ("Reset/Sub01/Brush.archive", [UInt8](secondary))], deflate: true)
         let presets = try ProcreateBrushImport.read(data: data, fallbackName: "double")
         XCTAssertEqual(presets.count, 1, "le secondaire n'est pas un pinceau à part")
@@ -109,6 +122,15 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(s.stampCount, 1, "0,0625 = 1 tampon, comme l'affiche Procreate")
         XCTAssertEqual(s.roundnessJitter, 0.36, accuracy: 1e-9)
         XCTAssertEqual(s.roundnessJitterX, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(s.pressureRoundness, 0, "minimum 100 % : la forme ne s'écrase pas")
+        XCTAssertEqual(s.tiltRoundness, 0)
+        XCTAssertEqual(second.tiltRoundness, 0.6, accuracy: 1e-9, "effet 100 %, minimum 40 %")
+        XCTAssertFalse(s.wetMixActive, "dilution nulle : pas de mélange humide malgré tirage et charge")
+        XCTAssertFalse(s.varyingColor)
+        XCTAssertGreaterThan(try XCTUnwrap(s.shape).values[16 * 32 + 16], 0.9, "forme principale telle quelle")
+        let invertedShape = try XCTUnwrap(second.shape)
+        XCTAssertLessThan(invertedShape.values[16 * 32 + 16], 0.1, "forme secondaire inversée (shapeInverted)")
+        XCTAssertGreaterThan(invertedShape.values[0], 0.9)
 
         // Le .prbrush garde tout : secondaire, combinaison, courbe, flux, rendu.
         var edited = s

@@ -119,8 +119,9 @@ extension BrushSettings {
          tiltHue, tiltSaturation, tiltBrightness, tiltSecondary].contains { $0 != 0 }
     }
 
-    /// Le mélange humide a un effet (dilution, tirage ou flou).
-    public var wetMixActive: Bool { wetDilution > 0 || wetPull > 0 || wetBlur > 0 }
+    /// Le mélange humide a un effet : comme dans Procreate, il faut de l'eau (dilution) ou du flou. Sans dilution, charge,
+    /// attaque, tirage et grade n'agissent pas (Minke : charge 1 %, tirage 10 %, dilution nulle, trait plein).
+    public var wetMixActive: Bool { wetDilution > 0 || wetBlur > 0 }
 
     /// La couleur change d'un tampon à l'autre : le trait garde une couleur par texel (voir `StrokeMask.depositColor`).
     public var varyingColor: Bool { hasColorDynamics || wetMixActive }
