@@ -66,6 +66,19 @@ final class PaintDynamicsGPUTests: XCTestCase {
         XCTAssertGreaterThan(worstDifference(cpu, plain), 0.05)
     }
 
+    func testMultiplyStrokeMatchesCPU() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("pas de GPU Metal sur cette machine") }
+        let steps = [(real: dabs(from: 0, count: 30), predicted: [SphericalDab]())]
+        for multiply in [StrokeStyle(color: [0.9, 0.8, 0.3], multiply: true), StrokeStyle(color: [0.9, 0.3, 0.1], varyingColor: true, multiply: true)] {
+            let cpu = paint(device: nil, style: multiply, steps: steps)
+            let gpu = paint(device: device, style: multiply, steps: steps)
+            XCTAssertLessThan(worstDifference(cpu, gpu), 0.004)
+            var normal = multiply
+            normal.multiply = false
+            XCTAssertGreaterThan(worstDifference(cpu, paint(device: nil, style: normal, steps: steps)), 0.05, "le fond bleu fonce le trait")
+        }
+    }
+
     func testPredictionLeavesNoTrace() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("pas de GPU Metal sur cette machine") }
         // Prédictions faussées exprès (décalées vers le nord, sur des tuiles que le trait ne touche jamais).

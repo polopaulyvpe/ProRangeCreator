@@ -30,7 +30,7 @@ gh run view --log-failed
 | `PreferencesTests` | Aller-retour JSON ; champ inconnu, manquant ou illisible sans perte des autres ; courbe de pression (linéaire, ferme, douce, bornes) |
 | `BuiltInBrushesTests` | Catalogue complet (catégories, identifiants uniques), textures ni vides ni pleines et dans [0, 1] ; tampon soleil (cœur, halo) et silhouette de collines (pleine en bas, vide en haut) sur la sphère |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
-| `PaintDynamicsTests` | Couleur par texel du masque (texel vierge exact, glacis plein recouvert selon la force du tampon) ; dynamique de couleur (neutre, couleur secondaire par la pression, assombrir, demi-tour de teinte) ; mélange humide (le tirage prend la couleur de la toile, toile vide sans effet, dilution et charge) ; azimut, rondeur, bavure, dégradé ; azimut interpolé par le plus court chemin |
+| `PaintDynamicsTests` | Couleur par texel du masque (texel vierge exact, glacis plein recouvert selon la force du tampon) ; dynamique de couleur (neutre, couleur secondaire par la pression, assombrir, demi-tour de teinte) ; mélange humide (sans dilution rien ne se passe ; le tirage prend la couleur de la toile, toile vide sans effet, dilution et charge) ; azimut, rondeur, bavure, dégradé ; azimut interpolé par le plus court chemin |
 
 ## Suites actuelles (PREngine) — sautées sans GPU
 
@@ -44,7 +44,7 @@ gh run view --log-failed
 | `FilterEngineTests` | **Les ajustements GPU contre `Adjustment.apply`** ; flou, bruit et aberration chromatique GPU contre CPU ; flou de mouvement et netteté laissent un aplat intact ; bloom (rien sous le seuil, halo autour du HDR) ; aperçu en direct dans la toile, annulé sans trace puis appliqué |
 | `BrushTipGPUTests` | **Forme tournée et grain triplanaire : kernel GPU contre `DabEvaluator`** (équateur, couture, pôle, HDR) |
 | `StackCanvasTests` | **Shader contre compositeur CPU pour les 26 modes × 2 espaces** (chemin GPU) ; chemin CPU (Produit au-dessus, masque) ; peinture du masque ; trait GPU annulé sans trace, validé identique au calque CPU, annulé par l'historique ; verrou alpha GPU = CPU |
-| `PaintDynamicsGPUTests` | **Trait à couleur variable : GPU (`stampMaskColor`) contre CPU** ; **anticipation sans trace** : un trait avec des prédictions fausses (tuiles neuves et tuiles du trait) finit identique au trait sans prédiction, couleur fixe et variable |
+| `PaintDynamicsGPUTests` | **Trait à couleur variable : GPU (`stampMaskColor`) contre CPU** ; **anticipation sans trace** : un trait avec des prédictions fausses (tuiles neuves et tuiles du trait) finit identique au trait sans prédiction, couleur fixe et variable ; **fusion Multiplier : GPU (`blendMultiply`) contre CPU**, couleur fixe et variable |
 
 ## Suites actuelles (PRImaging)
 
@@ -55,7 +55,7 @@ gh run view --log-failed
 | `FullExportTests` | **PNG 8/16, TIFF 16/32 et JPG relus par ImageIO** (valeurs exactes à l'arrondi près, HDR conservé en TIFF) ; orientation (lacet = décalage exact, miroir) ; cubemap : aller-retour face/direction, centre de chaque face, croix et bande ; lot de résolutions ; annulation sans fichier pour PNG, TIFF, JPG ; courbes de tone mapping |
 | `ImportTests` | Décodage PNG (linéaire), EXR (notre lecteur et ImageIO avec alpha corrigé), HDR ; panorama identique à même taille, réduction, lacet ; recadrage et marges d'une image carrée ; **aller-retour équirect → cubemap → équirect** (> 30 dB) ; croix découpée = six faces ; ordre de la bande ; détection des dispositions |
 
-| `BrushAndTimelapseTests` | Faux `.brush` (ZIP stocké et deflate, archive NSKeyedArchiver) : nom, opacité, espacement, rotation, grain, pression repris, clé inconnue signalée, forme lue ; `.brushset` à deux pinceaux ; `.prbrush` aller-retour ; PNG → forme et grain inversé ; **timelapse** : captures, export HEVC déplié et sphère (codec et durée vérifiés par AVFoundation), copie et rechargement avec le projet |
+| `BrushAndTimelapseTests` | Faux `.brush` (ZIP stocké et deflate, archive NSKeyedArchiver) : nom, opacité, espacement, rotation, grain, pression repris, clé inconnue signalée, forme lue ; `.brushset` à deux pinceaux ; `.prbrush` aller-retour ; valeurs de Minke (rondeur neutralisée par son minimum, pas de mélange humide sans dilution, mode Multiplier, forme secondaire inversée) ; PNG → forme et grain inversé ; **timelapse** : captures, export HEVC déplié et sphère (codec et durée vérifiés par AVFoundation), copie et rechargement avec le projet |
 
 ## Suites actuelles (PRStorage)
 

@@ -145,7 +145,7 @@ public enum ProcreateBrushImport {
         "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
         "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
         "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter", "jitterShapeRoundness", "jitterShapeRoundnessX",
-    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth", "shapeInverted", "dynamicsPressureShapeRoundness",
+    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth", "shapeInverted", "blendMode", "dynamicsPressureShapeRoundness",
         "dynamicsPressureShapeRoundnessMinimum", "dynamicsTiltShapeRoundness", "dynamicsTiltShapeRoundnessMinimum"])
 
     /// Dynamique de couleur et Apple Pencil : clé Procreate → réglage (valeurs de l'archive dans [0, 1]).
@@ -274,6 +274,15 @@ public enum ProcreateBrushImport {
         settings.rendering = recursive ? (maxTransfer ? .intenseBlending : .uniformBlending)
             : (maxTransfer ? .intenseGlaze : (modulated ? .uniformGlaze : .lightGlaze))
         mapped.append("rendu → \(settings.rendering.label.lowercased())")
+        // Rendu > Mode de fusion : codes des modes de calque (1 = Multiplier, vérifié sur Minke). Les autres ne sont pas gérés.
+        if let mode = number("blendMode") {
+            if Int(mode) == 1 {
+                settings.multiplyBlend = true
+                mapped.append("mode de fusion → multiplier")
+            } else if Int(mode) != 0 {
+                ignored.append("mode de fusion du pinceau (code \(Int(mode))) : seuls Normal et Multiplier sont gérés")
+            }
+        }
         // Courbes de pression : points « {x, y} » d'un ValkyrieMagnitudinalCurve.
         func curve(_ key: String) -> PressureCurve? {
             guard let reference = brush[key], let index = uidIndex(reference), index < objects.count,
@@ -632,6 +641,7 @@ public enum NativeBrushFile {
     static var flagKeys: [(String, WritableKeyPath<BrushSettings, Bool>)] { [
         ("randomizeRotation", \.randomizeRotation), ("grainMoving", \.grainMoving),
         ("grainOffsetJitter", \.grainOffsetJitter), ("grainInverted", \.grainInverted), ("azimuthRotation", \.azimuthRotation),
+        ("multiplyBlend", \.multiplyBlend),
     ] }
 
     static func encode(_ texture: BrushTexture?) -> Texture? {

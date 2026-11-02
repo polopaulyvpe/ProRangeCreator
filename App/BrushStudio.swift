@@ -242,6 +242,11 @@ struct BrushStudioView: View {
                 Text("Part de l'opacité posée à chaque tampon : en dessous du maximum, le trait monte progressivement.")
                     .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
+            StudioCard {
+                Toggle("Mode de fusion : Multiplier", isOn: $draft.multiplyBlend)
+                Text("La couleur fonce la peinture déjà posée au lieu de la couvrir, comme de l'encre ou de l'aquarelle (Minke). Sur une zone vide, rien ne change.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
             if parkedPrimary == nil {
                 StudioCard {
                     Text("Pinceau double").font(.headline)

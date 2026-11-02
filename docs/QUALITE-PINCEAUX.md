@@ -37,6 +37,22 @@ observe et ce qu'on fait pour l'égaler.
 | **Traits très fins** | Continus | Tampons plus petits qu'un texel : pointillés, scintillement | Rayon minimal 0,7 texel, opacité réduite d'autant (même quantité de peinture) |
 | **Réglages** | ~150 réglages par pinceau | ~40 | ~120 (rendu, double, courbes, grain, variations, couleur, humide, Pencil…) |
 
+## Minke, réglage par réglage
+
+Les 240 clés de `Minke.brush` (principal et secondaire `Sub01`) ont été décodées et comparées à l'import. Écarts trouvés
+et corrigés le 2 novembre :
+
+| Réglage Procreate | Valeur | Avant | Maintenant |
+|---|---|---|---|
+| Rendu > Mode de fusion | Multiplier (`blendMode` 1) | Ignoré : Minke couvrait comme en Normal | Mode Multiplier : la peinture fonce celle déjà posée |
+| Mélange humide | Dilution 0, charge 1 %, attaque 20 %, tirage 10 %, grade 80 % | Mélange actif : opacité ~44 %, trait vidé en quelques diamètres | Inactif sans dilution, comme Procreate |
+| Pencil > Rondeur (pression, inclinaison) | Effet 100 %, minimum 100 % | Forme écrasée à pression légère | Aucun écrasement |
+| Secondaire > Forme inversée | Oui | Ignoré | Appliqué à l'import (`Shape.png`) |
+
+Formes et grains de Minke sont internes à Procreate : ils ne sont pas dans le dépôt, Paul les ajoute depuis ses PNG.
+Encore non gérés (effet jugé nul ou inconnu) : `dynamicsPressure…Speed`, `maxPressureSizeClamped`, `textureZoom`,
+`shapeFilterMode`, `legacyNormalDual`, bavure de 0,05 %.
+
 ## Ce qui reste différent
 
 - **Définition de la toile** : Procreate peint à la résolution de l'écran ou plus. Une toile 4K (4096 × 2048) étalée sur

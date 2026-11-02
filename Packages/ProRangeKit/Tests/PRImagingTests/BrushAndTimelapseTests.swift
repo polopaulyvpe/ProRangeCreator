@@ -65,6 +65,7 @@ final class FakeDualBrush: NSObject, NSCoding {
             coder.encode(true, forKey: "shapeInverted")
             return
         }
+        coder.encode(1.0, forKey: "blendMode")
         coder.encode(0.0, forKey: "dynamicsMix")
         coder.encode(0.2, forKey: "dynamicsPressureMix")
         coder.encode(0.1, forKey: "dynamicsWetAccumulation")
@@ -127,6 +128,10 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(second.tiltRoundness, 0.6, accuracy: 1e-9, "effet 100 %, minimum 40 %")
         XCTAssertFalse(s.wetMixActive, "dilution nulle : pas de mélange humide malgré tirage et charge")
         XCTAssertFalse(s.varyingColor)
+        XCTAssertTrue(s.multiplyBlend, "blendMode 1 = Multiplier (Minke)")
+        XCTAssertTrue(s.strokeStyle(color: [1, 1, 1], mode: .paint).multiply)
+        XCTAssertFalse(s.strokeStyle(color: [1, 1, 1], mode: .erase).multiply)
+        XCTAssertFalse(second.multiplyBlend)
         XCTAssertGreaterThan(try XCTUnwrap(s.shape).values[16 * 32 + 16], 0.9, "forme principale telle quelle")
         let invertedShape = try XCTUnwrap(second.shape)
         XCTAssertLessThan(invertedShape.values[16 * 32 + 16], 0.1, "forme secondaire inversée (shapeInverted)")
@@ -147,6 +152,7 @@ final class BrushAndTimelapseTests: XCTestCase {
         XCTAssertEqual(back.longitudinalJitter, 0.05, accuracy: 1e-9)
         XCTAssertEqual(back.wetCharge, 0.01, accuracy: 1e-9)
         XCTAssertEqual(back.minSizeDegrees, s.minSizeDegrees)
+        XCTAssertTrue(back.multiplyBlend)
     }
 
     private var directory: URL!

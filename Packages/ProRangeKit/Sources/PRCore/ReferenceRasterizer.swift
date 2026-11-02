@@ -211,4 +211,21 @@ public enum SphericalRasterizer {
         let src = SIMD4<Float>(color.x * a, color.y * a, color.z * a, a)
         dst = src + dst * (1 - a)
     }
+
+    /// Mode de fusion Multiplier du pinceau (formule séparable du W3C, B(cb, cs) = cb·cs) : sur du vide, la couleur est
+    /// posée telle quelle ; sur de la peinture, elle la fonce. `perceptual` : produit des valeurs encodées (sRGB).
+    public static func blendMultiply(_ color: SIMD3<Float>, coverage a: Float, into dst: inout SIMD4<Float>, perceptual: Bool) {
+        let da = dst.w
+        let outA = a + da * (1 - a)
+        guard outA > 0 else {
+            dst = .zero
+            return
+        }
+        let below = da > 0 ? SIMD3<Float>(dst.x, dst.y, dst.z) / da : SIMD3<Float>.zero
+        let cs = perceptual ? ColorTransfer.toEncoded(color) : color
+        let cb = perceptual ? ColorTransfer.toEncoded(below) : below
+        let mixed = (cs * (a * (1 - da)) + cs * cb * (a * da) + cb * (da * (1 - a))) / outA
+        let rgb = (perceptual ? ColorTransfer.toLinear(mixed) : mixed) * outA
+        dst = SIMD4<Float>(rgb.x, rgb.y, rgb.z, outA)
+    }
 }

@@ -136,6 +136,8 @@ public struct BrushSettings: Equatable, Sendable {
 
     // MARK: Rendu (voir `BrushRendering` et `StrokeMask`)
     public var rendering: BrushRendering = .lightGlaze
+    /// Mode de fusion Multiplier : la peinture fonce celle déjà posée au lieu de la couvrir (Minke).
+    public var multiplyBlend = false
     /// Flux, dans [0, 1] : part de l'opacité ajoutée au trait à chaque tampon (1 = d'un coup, moins = monte progressivement).
     public var flow: Double = 1
 
@@ -164,7 +166,7 @@ public struct BrushSettings: Equatable, Sendable {
     public func strokeStyle(color: SIMD3<Float>, mode: DabMode) -> StrokeStyle {
         StrokeStyle(color: color, mode: mode, capsPrimary: rendering.capsOpacity,
                     capsSecondary: secondary?.rendering.capsOpacity ?? true, dual: secondary == nil ? nil : dualBlendMode,
-                    varyingColor: mode == .paint && varyingColor)
+                    varyingColor: mode == .paint && varyingColor, multiply: mode == .paint && multiplyBlend)
     }
 
     // MARK: Dynamique

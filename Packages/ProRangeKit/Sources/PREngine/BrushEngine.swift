@@ -31,7 +31,7 @@ public final class BrushEngine {
     struct GPUStroke {
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, mode (0 peindre, 1 effacer)
         var options: SIMD4<Float>  // plafond du principal, plafond du secondaire, combinaison (−1 aucune), espace (1 linéaire)
-        var lock: SIMD4<Float>     // verrou alpha, couleur par texel (texture 3), inutilisés
+        var lock: SIMD4<Float>     // verrou alpha, couleur par texel (texture 3), fusion Multiplier, inutilisé
     }
 
     public let device: any MTLDevice
@@ -316,7 +316,7 @@ public final class BrushEngine {
         var stroke = GPUStroke(color: SIMD4<Float>(style.color.x, style.color.y, style.color.z, style.mode == .erase ? 1 : 0),
                                options: SIMD4<Float>(style.capsPrimary ? 1 : 0, style.capsSecondary ? 1 : 0,
                                                      Float(style.dual?.index ?? -1), space == .linear ? 1 : 0),
-                               lock: SIMD4<Float>(alphaLock ? 1 : 0, color == nil ? 0 : 1, 0, 0))
+                               lock: SIMD4<Float>(alphaLock ? 1 : 0, color == nil ? 0 : 1, style.multiply ? 1 : 0, 0))
         let coords = tiles.map { SIMD2<Int32>(Int32($0.x), Int32($0.y)) }
         encoder.setComputePipelineState(applyPipeline)
         encoder.setTexture(layer, index: 0)
@@ -476,6 +476,18 @@ public final class BrushEngine {
         return float4(toLinear3(mixed) * outA, outA);
     }
 
+    /// Fusion Multiplier du pinceau (voir `SphericalRasterizer.blendMultiply`).
+    static float4 blendMultiply(float4 dst, float3 color, float sa, bool linearSpace) {
+        float da = dst.w;
+        float outA = sa + da * (1.0 - sa);
+        if (outA <= 0.0) { return float4(0.0); }
+        float3 below = da > 0.0 ? dst.rgb / da : float3(0.0);
+        float3 cs = linearSpace ? color : toEncoded3(color);
+        float3 cb = linearSpace ? below : toEncoded3(below);
+        float3 mixed = (cs * (sa * (1.0 - da)) + cs * cb * (sa * da) + cb * (da * (1.0 - sa))) / outA;
+        return float4((linearSpace ? mixed : toLinear3(mixed)) * outA, outA);
+    }
+
     /// Ajoute un tampon d'opacité `o` et de flux `flow` au masque (voir `StrokeMask.accumulate`).
     static void accumulateMask(thread float4& m, float o, float flow, bool secondary) {
         float f = o * flow;
@@ -574,7 +586,9 @@ public final class BrushEngine {
         float4 dst = before;
         if (alpha > 0.0) {
             float3 rgb = stroke.lock.y > 0.5 ? colors.read(p).rgb : stroke.color.rgb;
-            dst = blendOver(before, rgb, alpha, stroke.color.w > 0.5, stroke.options.w > 0.5);
+            dst = (stroke.lock.z > 0.5 && stroke.color.w < 0.5)
+                ? blendMultiply(before, rgb, alpha, stroke.options.w > 0.5)
+                : blendOver(before, rgb, alpha, stroke.color.w > 0.5, stroke.options.w > 0.5);
             if (stroke.lock.x > 0.5) { dst = lockAlpha(dst, before); }
         }
         layer.write(dst, p);

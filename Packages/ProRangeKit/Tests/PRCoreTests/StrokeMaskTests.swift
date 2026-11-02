@@ -65,6 +65,29 @@ final class StrokeMaskTests: XCTestCase {
         XCTAssertEqual(erased, .zero)
     }
 
+    func testMultiplyDarkensWhatIsAlreadyPainted() {
+        let style = StrokeStyle(color: [1, 0.5, 0.25], multiply: true)
+        // Sur du vide : la couleur telle quelle.
+        let empty = StrokeMask.composite(.zero, alpha: 1, style: style, space: .linear, alphaLock: false)
+        XCTAssertEqual(empty, [1, 0.5, 0.25, 1])
+        // Sur du gris opaque : produit, jamais plus clair que le dessous.
+        let gray = SIMD4<Float>(0.5, 0.5, 0.5, 1)
+        let full = StrokeMask.composite(gray, alpha: 1, style: style, space: .linear, alphaLock: false)
+        XCTAssertEqual(full.x, 0.5, accuracy: 1e-6)
+        XCTAssertEqual(full.y, 0.25, accuracy: 1e-6)
+        XCTAssertEqual(full.w, 1, accuracy: 1e-6)
+        // Du blanc en Multiplier ne couvre pas le noir (le test de Paul dans Procreate).
+        let white = StrokeStyle(color: [1, 1, 1], multiply: true)
+        let black = SIMD4<Float>(0, 0, 0, 1)
+        for space in [BlendSpace.linear, .perceptual] {
+            let out = StrokeMask.composite(black, alpha: 0.8, style: white, space: space, alphaLock: false)
+            XCTAssertEqual(out.x, 0, accuracy: 1e-5)
+            let half = StrokeMask.composite(gray, alpha: 0.5, style: style, space: space, alphaLock: false)
+            XCTAssertLessThanOrEqual(half.x, gray.x + 1e-5, "jamais plus clair")
+            XCTAssertLessThan(half.z, gray.z)
+        }
+    }
+
     func testGrainBlendRollingGrainAndJitters() {
         // Fusion du grain : produit = l'ancien calcul ; densité linéaire + = le grain creuse la forme.
         var tip = DabTip(grain: BrushTexture(name: "g", size: 1, values: [0.4]), grainDepth: 1)

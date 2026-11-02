@@ -104,15 +104,18 @@ public struct StrokeStyle: Sendable, Equatable {
     /// Chaque tampon apporte sa couleur (dynamique de couleur, mélange humide) : le trait garde une couleur par texel
     /// (voir `StrokeMask.depositColor`) au lieu de `color`.
     public var varyingColor: Bool
+    /// Mode de fusion Multiplier (Atelier > Rendu > Mode de fusion) ; sinon Normal.
+    public var multiply: Bool
 
     public init(color: SIMD3<Float>, mode: DabMode = .paint, capsPrimary: Bool = true, capsSecondary: Bool = true,
-                dual: DualBlendMode? = nil, varyingColor: Bool = false) {
+                dual: DualBlendMode? = nil, varyingColor: Bool = false, multiply: Bool = false) {
         self.color = color
         self.mode = mode
         self.capsPrimary = capsPrimary
         self.capsSecondary = capsSecondary
         self.dual = dual
         self.varyingColor = varyingColor
+        self.multiply = multiply
     }
 }
 
@@ -168,6 +171,10 @@ public enum StrokeMask {
             dst *= 1 - alpha
         case .paint:
             let rgb = texel ?? style.color
+            if style.multiply {
+                SphericalRasterizer.blendMultiply(rgb, coverage: alpha, into: &dst, perceptual: space == .perceptual)
+                break
+            }
             let color = SIMD4<Float>(rgb.x, rgb.y, rgb.z, 1)
             switch space {
             case .linear: SphericalRasterizer.blend(color, coverage: alpha, into: &dst)
