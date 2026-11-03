@@ -235,10 +235,10 @@ enum PanoramaShaders {
             if (length(r) < 1e-6) { return true; }
             float det = gu.x * gv.y - gv.x * gu.y;
             if (abs(det) < 1e-9) { return false; }
-            float2 step = float2(gv.y * r.x - gv.x * r.y, -gu.y * r.x + gu.x * r.y) / det;
-            float l = length(step);
-            if (l > 0.5) { step *= 0.5 / l; }
-            w -= step;
+            float2 dw = float2(gv.y * r.x - gv.x * r.y, -gu.y * r.x + gu.x * r.y) / det;
+            float l = length(dw);
+            if (l > 0.5) { dw *= 0.5 / l; }
+            w -= dw;
         }
         return true;
     }
