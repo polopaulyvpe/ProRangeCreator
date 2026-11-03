@@ -183,16 +183,16 @@ extension CanvasSession {
             if transformAdvancedMesh, let h = t.homography {
                 for k in 0..<16 {
                     if let q = h.apply(t.mesh.points[k]), let p = screenPoint(of: t.direction(ofPlanePoint: q), parameters, size) {
-                        g.handles.append((.mesh(k), p))
+                        g.handles.append((handle: .mesh(k), point: p))
                     }
                 }
             } else {
-                for (i, w) in corners.enumerated() { if let p = screen(w) { g.handles.append((.corner(i), p)) } }
+                for (i, w) in corners.enumerated() { if let p = screen(w) { g.handles.append((handle: .corner(i), point: p)) } }
             }
             return g
         }
-        for (i, w) in corners.enumerated() { if let p = screen(w) { g.handles.append((.corner(i), p)) } }
-        for (i, w) in mids.enumerated() { if let p = screen(w) { g.handles.append((.edge(i), p)) } }
+        for (i, w) in corners.enumerated() { if let p = screen(w) { g.handles.append((handle: .corner(i), point: p)) } }
+        for (i, w) in mids.enumerated() { if let p = screen(w) { g.handles.append((handle: .edge(i), point: p)) } }
         // Tiges : vers l'extérieur de la boîte, depuis le milieu du haut (rotation) et du bas (boîte seule).
         if let c = screen([0.5, 0.5]) {
             func stem(_ w: SIMD2<Double>) -> (CGPoint, CGPoint)? {
@@ -202,10 +202,10 @@ extension CanvasSession {
                 return (base, CGPoint(x: base.x + v.x / length * 34, y: base.y + v.y / length * 34))
             }
             g.rotateStem = stem([0.5, 0])
-            if let top = g.rotateStem { g.handles.append((.rotate, top.1)) }
+            if let top = g.rotateStem { g.handles.append((handle: .rotate, point: top.1)) }
             if transformMode != .distort, t.mesh.isIdentity {
                 g.boxStem = stem([0.5, 1])
-                if let bottom = g.boxStem { g.handles.append((.box, bottom.1)) }
+                if let bottom = g.boxStem { g.handles.append((handle: .box, point: bottom.1)) }
             }
         }
         return g
