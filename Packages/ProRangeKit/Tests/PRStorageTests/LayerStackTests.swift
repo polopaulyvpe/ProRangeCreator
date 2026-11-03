@@ -184,4 +184,113 @@ final class LayerStackTests: XCTestCase {
         let (_, flat) = try ProjectPackage.loadStack(from: v1)
         XCTAssertEqual(flat.items.count, 1)
     }
+
+    func testPlaceGroupAndCollapse() {
+        let stack = makeStack()
+        let a = stack.items[0]
+        let b = stack.addLayer()!
+        let c = stack.addLayer()!
+        // Panneau (haut → bas) : c, b, a. a sous c : c, a, b.
+        XCTAssertTrue(stack.place(a.id, belowRow: c.id))
+        XCTAssertEqual(stack.items.map(\.id), [b.id, a.id, c.id])
+        XCTAssertTrue(stack.place(b.id, belowRow: nil), "tout en haut")
+        XCTAssertEqual(stack.items.map(\.id), [a.id, c.id, b.id])
+        XCTAssertFalse(stack.place(b.id, belowRow: b.id))
+
+        let group = stack.group([a.id, b.id])!
+        XCTAssertEqual(group.name, "Nouveau groupe")
+        XCTAssertEqual(stack.children(of: group.id).map(\.id), [a.id, b.id], "ordre conservé")
+        XCTAssertEqual(stack.children(of: nil).map(\.id), [c.id, group.id], "à la place du plus haut")
+        XCTAssertFalse(stack.place(group.id, belowRow: a.id), "pas dans lui-même")
+
+        // Sous un groupe déplié : premier enfant. Sous un groupe replié : frère dessous.
+        XCTAssertTrue(stack.place(c.id, belowRow: group.id))
+        XCTAssertEqual(stack.item(c.id)?.parent, group.id)
+        XCTAssertEqual(stack.children(of: group.id).last?.id, c.id)
+        stack.update(group.id) { $0.isCollapsed = true }
+        XCTAssertTrue(stack.place(c.id, belowRow: group.id))
+        XCTAssertNil(stack.item(c.id)?.parent)
+        XCTAssertEqual(stack.children(of: nil).map(\.id), [c.id, group.id])
+    }
+
+    func testLockReferenceAndDuplicate() {
+        let stack = makeStack()
+        let a = stack.items[0]
+        let b = stack.addLayer()!
+        let group = stack.groupWithBelow(b.id)!
+        stack.update(group.id) { $0.isLocked = true }
+        XCTAssertTrue(stack.isLocked(a.id), "verrouillé par son groupe")
+        stack.update(group.id) { $0.isLocked = false }
+        stack.update(a.id) { $0.isLocked = true }
+        let copy = stack.duplicate(a.id)!
+        XCTAssertEqual(copy.name, a.name, "même nom")
+        XCTAssertTrue(copy.isLocked, "même verrou")
+
+        stack.setReference(a.id, true)
+        XCTAssertTrue(stack.referenceLayer === a.layer)
+        stack.setReference(b.id, true)
+        XCTAssertTrue(stack.referenceLayer === b.layer, "une seule référence")
+        XCTAssertFalse(stack.item(a.id)!.isReference)
+    }
+
+    func testMergeSeveralMatchesComposite() throws {
+        let stack = makeStack()
+        paint(stack.items[0], color: [0.2, 0.6, 0.2, 1])
+        let middle = stack.addLayer()!
+        paint(middle, color: [0.1, 0.1, 0.9, 0.6], radius: 0.25)
+        stack.update(middle.id) { $0.blendMode = .multiply }
+        let top = stack.addLayer()!
+        paint(top, color: [0.9, 0.1, 0.1, 0.5], radius: 0.2)
+        stack.update(top.id) { $0.opacity = 0.7 }
+        let reference = centerPixel(stack)
+        let history = UndoRedoManager()
+
+        let entry = try XCTUnwrap(stack.merge([top.id, stack.items[0].id, middle.id], space: .perceptual))
+        history.record(entry)
+        XCTAssertEqual(stack.layerCount, 1)
+        XCTAssertLessThan(simd_length(centerPixel(stack) - reference), 2e-3, "même image après fusion")
+        try history.undo(in: stack)
+        XCTAssertEqual(stack.layerCount, 3)
+        XCTAssertLessThan(simd_length(centerPixel(stack) - reference), 1e-6, "annulation exacte")
+    }
+
+    func testNewPropertiesAndBackgroundSaved() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("prstack-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stack = makeStack()
+        let top = stack.addLayer()!
+        let group = stack.groupWithBelow(top.id)!
+        stack.update(top.id) { $0.isLocked = true }
+        stack.setReference(top.id, true)
+        stack.update(group.id) { $0.isCollapsed = true }
+        stack.background = [0.2, 0.3, 0.4]
+        stack.backgroundVisible = false
+        XCTAssertEqual(centerPixel(stack, paper: stack.backgroundVisible ? stack.background : nil), .zero)
+
+        let url = directory.appendingPathComponent("P.prrange")
+        try ProjectPackage.save(stack: stack, to: url)
+        let loaded = try ProjectPackage.loadStack(from: url).stack
+        XCTAssertEqual(loaded.item(top.id)?.isLocked, true)
+        XCTAssertEqual(loaded.item(top.id)?.isReference, true)
+        XCTAssertEqual(loaded.item(group.id)?.isCollapsed, true)
+        XCTAssertEqual(loaded.background, [0.2, 0.3, 0.4])
+        XCTAssertFalse(loaded.backgroundVisible)
+    }
+
+    func testSelectContentAndReferenceFill() {
+        let stack = makeStack()
+        let painted = stack.items[0]
+        paint(painted, color: [1, 1, 1, 1], radius: 0.3)
+        let selection = SelectionMask(width: 1024, height: 512)
+        selection.selectContent(of: painted.layer!)
+        XCTAssertEqual(selection.value(x: 512, y: 256), 1, accuracy: 1e-3, "contenu sélectionné")
+        XCTAssertEqual(selection.value(x: 10, y: 256), 0, "vide ailleurs")
+
+        // Remplissage d'un calque vide guidé par la référence : seul le disque est rempli.
+        let target = stack.addLayer()!.layer!
+        target.floodFill(from: [0, 0, -1], color: [0, 0, 1, 1], threshold: 0.1, space: .perceptual, reference: painted.layer)
+        let sampler = LayerSampler(target)
+        XCTAssertGreaterThan(sampler.texel(512, 256).w, 0.99)
+        XCTAssertEqual(sampler.texel(10, 256).w, 0)
+    }
 }
