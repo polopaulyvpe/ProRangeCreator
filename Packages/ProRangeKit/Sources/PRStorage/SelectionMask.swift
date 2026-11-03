@@ -73,6 +73,16 @@ public final class SelectionMask {
         }
     }
 
+    /// Remplace la sélection par le contenu d'un calque : chaque pixel est sélectionné à hauteur de son alpha.
+    public func selectContent(of source: TiledLayer) {
+        clear()
+        for coord in source.storedTiles {
+            let values = source.tileFloatPixels(coord).map { min(1, max(0, $0.w)) }
+            if values.contains(where: { $0 > 0 }) { write(coord, values) }
+        }
+        cache.removeAll()
+    }
+
     public func selectAll() {
         for coord in allTiles { layer.replaceTile(coord, withPixels: [SIMD4<Float>](repeating: .one, count: TileSize.pixelCount)) }
         cache.removeAll()

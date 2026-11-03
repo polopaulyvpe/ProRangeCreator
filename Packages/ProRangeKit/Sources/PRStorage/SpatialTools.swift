@@ -56,10 +56,12 @@ extension TiledLayer {
 
     /// Remplit la zone connexe autour de `seed` dont les pixels ressemblent à celui de départ (écart encodé ≤ `threshold`, alpha compris).
     /// Voisinage : 4 voisins, longitude bouclée, et à travers les pôles (première et dernière rangées).
+    /// `reference` : calque dont les contours guident la zone (calque de référence), au lieu de ce calque.
     /// Renvoie les tuiles modifiées (enregistrées dans l'opération en cours s'il y en a une).
     @discardableResult
-    public func floodFill(from seed: Vec3, color: SIMD4<Float>, threshold: Float, space: BlendSpace) -> Set<TileCoord> {
-        let filled = floodMask(from: seed, threshold: threshold)
+    public func floodFill(from seed: Vec3, color: SIMD4<Float>, threshold: Float, space: BlendSpace,
+                          reference: TiledLayer? = nil) -> Set<TileCoord> {
+        let filled = (reference ?? self).floodMask(from: seed, threshold: threshold)
         let dab = SphericalDab(center: [0, 0, -1], radius: 1, hardness: 1, color: color)
         return applyMask(filled) { pixel in SphericalRasterizer.apply(dab, coverage: 1, to: &pixel, space: space) }
     }

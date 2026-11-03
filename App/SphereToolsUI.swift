@@ -7,7 +7,14 @@ import SwiftUI
 /// Outils sphériques du lot A : remplissage, dégradé, doigt, clonage, symétrie, guides, rotation de la sphère.
 extension CanvasSession {
     /// Calque que les outils modifient : les pixels du calque actif, ou son masque.
+    /// Nil si le calque est verrouillé : rien ne le modifie.
     var editTarget: TiledLayer? {
+        guard !stack.isLocked(activeID) else { return nil }
+        return readTarget
+    }
+
+    /// Calque que les outils lisent (sélection automatique, copie), même verrouillé.
+    var readTarget: TiledLayer? {
         guard let item = stack.item(activeID) else { return nil }
         return paintingMask ? item.mask : item.layer
     }
@@ -33,7 +40,11 @@ extension CanvasSession {
     func fill(at d: Vec3) {
         rememberColorIfNeeded()
         let color = toolColor
-        recordEdit("Remplissage") { $0.floodFill(from: d, color: color, threshold: Float(fillThreshold), space: blendSpace) }
+        // Un calque de référence (autre que celui peint) guide la zone remplie.
+        let reference = stack.referenceLayer.flatMap { $0 === editTarget ? nil : $0 }
+        recordEdit("Remplissage") {
+            $0.floodFill(from: d, color: color, threshold: Float(fillThreshold), space: blendSpace, reference: reference)
+        }
     }
 
     func applyGradient(from start: Vec3, to end: Vec3) {

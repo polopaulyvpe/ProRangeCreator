@@ -149,7 +149,7 @@ extension CanvasSession {
         selectionTouchActive = false
         switch selectionKind {
         case .automatic:
-            guard let start = automaticStart, let target = editTarget else { return }
+            guard let start = automaticStart, let target = readTarget else { return }
             automaticStart = nil
             let mask = target.floodMask(from: start.direction, threshold: Float(selectionThreshold))
             let mode = selectionCombine
@@ -242,9 +242,22 @@ extension CanvasSession {
         rememberColor()
     }
 
+    /// Sélectionner (options du calque) : la sélection devient le contenu du calque, et l'outil Sélection s'ouvre.
+    func selectLayerContent() {
+        guard let source = readTarget else { return }
+        applyTransform()
+        recordSelection("Sélectionner le calque") { $0.selectContent(of: source) }
+        guard hasSelection else {
+            showToast("Calque vide : rien à sélectionner")
+            return
+        }
+        tool = .select
+        showLayers = false
+    }
+
     /// Copier et coller : le contenu sélectionné part sur un nouveau calque, au-dessus, prêt à être transformé.
     func copyPasteSelection() {
-        guard hasSelection, let selection, let source = editTarget, stack.canAddLayer else { return }
+        guard hasSelection, let selection, let source = readTarget, stack.canAddLayer else { return }
         strokeCancelled()
         let copy = source.masked(by: selection)
         let before = stack.items

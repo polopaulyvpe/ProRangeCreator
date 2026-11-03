@@ -319,7 +319,7 @@ struct FileMenu: View {
         }
         .sheet(isPresented: $session.showProjects) { GallerySheet(session: session) }
         .sheet(isPresented: $session.showSnapshots) { SnapshotsSheet(session: session) }
-        .sheet(isPresented: $session.showExport) { ExportSheet(session: session) }
+        .sheet(isPresented: $session.showExport, onDismiss: { session.exportActiveLayerOnly = false }) { ExportSheet(session: session) }
     }
 }
 
@@ -331,6 +331,8 @@ struct ExportSheet: View {
     init(session: CanvasSession, kind: ExportKind = .exr) {
         self.session = session
         _kind = State(initialValue: kind)
+        _includePaper = State(initialValue: session.stack.backgroundVisible)
+        _activeLayerOnly = State(initialValue: session.exportActiveLayerOnly)
     }
     @State private var pixelType: EXRPixelType = .half
     @State private var compression: EXRCompression = .zip
@@ -365,7 +367,7 @@ struct ExportSheet: View {
 
     private var options: PanoramaExportOptions {
         let base = preset.orientation
-        return PanoramaExportOptions(paper: includePaper || kind == .jpeg ? [1, 1, 1] : nil,
+        return PanoramaExportOptions(paper: includePaper || kind == .jpeg ? session.stack.background : nil,
                                      orientation: ExportOrientation(yawDegrees: base.yawDegrees + extraYaw, flipHorizontal: flip),
                                      layout: layout,
                                      display: DisplayTransform(exposure: exposure, toneMapping: toneMapping),
@@ -383,7 +385,7 @@ struct ExportSheet: View {
                         Text("Calques visibles").tag(false)
                         Text("Calque actif seul").tag(true)
                     }
-                    Toggle("Papier blanc sous la peinture", isOn: $includePaper)
+                    Toggle("Couleur d'arrière-plan sous la peinture", isOn: $includePaper)
                         .disabled(kind == .jpeg)
                     Picker("Disposition", selection: $layout) {
                         ForEach(PanoramaLayout.allCases, id: \.self) { Text($0.label).tag($0) }

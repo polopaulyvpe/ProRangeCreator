@@ -67,6 +67,15 @@ final class CanvasSession {
     /// Calques garantis par la mémoire disponible au dernier contrôle (voir `MemoryBudget`).
     private(set) var guaranteedLayers = LayerStack.maxLayers
     var showLayers = false
+    /// Calques ajoutés à la sélection multiple du panneau (le calque actif en fait toujours partie).
+    var layerSelection: Set<UUID> = []
+    /// Suppression refusée : l'un des éléments est verrouillé.
+    var lockedDeleteAlert = false
+    /// Presse-papiers de l'app (Copier dans les options du calque).
+    @ObservationIgnored var copiedLayer: TiledLayer?
+    /// La feuille d'export s'ouvre sur « calque actif seulement » (Partager un calque).
+    var exportActiveLayerOnly = false
+    @ObservationIgnored var propertyEditID: UUID?
     // Interface façon Procreate (voir TopBar.swift)
     var showingGallery = true
     /// Réglage de taille en cours : un cercle montre la taille du pinceau sur la toile.
@@ -387,6 +396,8 @@ final class CanvasSession {
             selectionBegan(ndc: ndc)
             return
         }
+        // Calque verrouillé : aucun outil ne le peint.
+        if refuseIfLocked() { return }
         switch tool {
         case .fill:
             fill(at: d)
@@ -762,6 +773,8 @@ final class CanvasSession {
         discardTransform()
         lassoPoints = []
         savedSelections = []
+        layerSelection = []
+        if let copied = copiedLayer, copied.width != newStack.width || copied.height != newStack.height { copiedLayer = nil }
         stack = newStack
         history = UndoRedoManager(maxSteps: preferences.historyLimit)
         // Les textures d'affichage ont la taille de la toile : une autre résolution (projet 4K après un 8K,
@@ -832,7 +845,7 @@ final class CanvasSession {
         let x = min(stack.width - 1, max(0, Int(p.x)))
         let y = min(stack.height - 1, max(0, Int(p.y)))
         let coord = TileCoord.containing(x: x, y: y)
-        let tile = LayerCompositor.compositeTile(coord, stack: stack, paper: [1, 1, 1], space: blendSpace)
+        let tile = LayerCompositor.compositeTile(coord, stack: stack, paper: stack.background, space: blendSpace)
         let px = tile[(y % TileSize.side) * TileSize.side + x % TileSize.side]
         let encoded = ColorTransfer.toEncoded(SIMD3<Float>(px.x, px.y, px.z))
         color = [Double(min(1, max(0, encoded.x))), Double(min(1, max(0, encoded.y))), Double(min(1, max(0, encoded.z)))]
@@ -1211,7 +1224,7 @@ struct CanvasScreen: View {
             return true
         }
         .sheet(item: $session.pendingImport) { pending in ImportSheet(session: session, pending: pending) }
-        .sheet(isPresented: $session.showExport) { ExportSheet(session: session, kind: session.exportKind) }
+        .sheet(isPresented: $session.showExport, onDismiss: { session.exportActiveLayerOnly = false }) { ExportSheet(session: session, kind: session.exportKind) }
         .sheet(isPresented: $session.showTimelapse) { TimelapseSheet(session: session) }
         .sheet(isPresented: $session.showPreferences) { PreferencesSheet(session: session) }
         .sheet(isPresented: $session.showSnapshots) { SnapshotsSheet(session: session) }

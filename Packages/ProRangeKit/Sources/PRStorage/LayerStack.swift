@@ -24,6 +24,12 @@ public struct StackItem: Identifiable {
     public var mask: TiledLayer?
     /// Groupe parent (`nil` = racine).
     public var parent: UUID?
+    /// Verrouillé : ni peinture, ni filtre, ni transformation, ni suppression sans confirmation.
+    public var isLocked = false
+    /// Calque de référence : le remplissage suit ses contours au lieu de ceux du calque peint.
+    public var isReference = false
+    /// Groupe replié dans le panneau (ses enfants sont cachés de la liste, pas de la toile).
+    public var isCollapsed = false
 
     public init(id: UUID = UUID(), kind: Kind, name: String, parent: UUID? = nil) {
         self.id = id
@@ -52,6 +58,9 @@ public final class LayerStack: HistoryTarget {
     public let height: Int
     public let format: LayerPixelFormat
     public private(set) var items: [StackItem]
+    /// Couleur d'arrière-plan (RGB linéaire) sous tous les calques, et sa visibilité (cachée : fond transparent).
+    public var background: SIMD3<Float> = [1, 1, 1]
+    public var backgroundVisible = true
 
     public init(width: Int, height: Int, format: LayerPixelFormat = .rgba16Float, items: [StackItem]? = nil) {
         self.width = width
@@ -110,15 +119,16 @@ public final class LayerStack: HistoryTarget {
     @discardableResult
     public func duplicate(_ id: UUID) -> StackItem? {
         guard let i = index(of: id), let layer = items[i].layer, canAddLayer else { return nil }
-        var copy = items[i]
-        let name = "\(copy.name) copie"
-        copy = StackItem(kind: .layer(layer.duplicate(name: name)), name: name, parent: items[i].parent)
+        // La copie garde le nom de l'original, comme son verrou et toutes ses propriétés.
+        let name = items[i].name
+        var copy = StackItem(kind: .layer(layer.duplicate(name: name)), name: name, parent: items[i].parent)
         copy.opacity = items[i].opacity
         copy.isVisible = items[i].isVisible
         copy.blendMode = items[i].blendMode
         copy.alphaLock = items[i].alphaLock
         copy.isClipped = items[i].isClipped
         copy.mask = items[i].mask?.duplicate()
+        copy.isLocked = items[i].isLocked
         items.insert(copy, at: i + 1)
         return copy
     }
@@ -150,6 +160,86 @@ public final class LayerStack: HistoryTarget {
             rest.insert(contentsOf: blockItems, at: anchor)
         }
         items = rest
+    }
+
+    /// Déplace un élément (avec ses enfants) pour qu'il apparaisse dans le panneau juste sous la ligne `rowAbove`
+    /// (nil : tout en haut, à la racine). Sous un groupe déplié, l'élément devient son premier enfant ;
+    /// sous un calque ou un groupe replié, il devient son frère juste dessous.
+    /// Refuse de mettre un groupe dans lui-même. Renvoie vrai si la pile a changé.
+    @discardableResult
+    public func place(_ id: UUID, belowRow rowAbove: UUID?) -> Bool {
+        guard let original = item(id), rowAbove != id else { return false }
+        let block = Set([id] + descendants(of: id))
+        if let rowAbove, block.contains(rowAbove) { return false }
+        let order = items.map(\.id)
+        var moving = items.filter { block.contains($0.id) }
+        var rest = items.filter { !block.contains($0.id) }
+        var newParent: UUID?
+        var insertion = rest.count
+        if let rowAbove, let anchor = rest.firstIndex(where: { $0.id == rowAbove }) {
+            let target = rest[anchor]
+            if target.isGroup && !target.isCollapsed {
+                // Premier enfant (le plus haut) : juste sous le groupe dans l'ordre de la pile.
+                newParent = target.id
+                insertion = anchor
+            } else {
+                // Frère juste dessous : avant le bloc de la cible (ses enfants sont sous elle).
+                newParent = target.parent
+                let targetBlock = Set([target.id] + descendants(of: target.id))
+                insertion = rest.firstIndex { targetBlock.contains($0.id) } ?? anchor
+            }
+        }
+        if let i = moving.firstIndex(where: { $0.id == id }) { moving[i].parent = newParent }
+        rest.insert(contentsOf: moving, at: insertion)
+        items = rest
+        return items.map(\.id) != order || newParent != original.parent
+    }
+
+    /// Met plusieurs éléments dans un nouveau groupe, placé à la position du plus haut d'entre eux.
+    /// Les descendants d'un élément choisi le suivent ; un élément contenu dans un autre élément choisi y reste.
+    @discardableResult
+    public func group(_ ids: [UUID], name: String = "Nouveau groupe") -> StackItem? {
+        let chosen = Set(ids)
+        func hasChosenAncestor(_ item: StackItem) -> Bool {
+            var parent = item.parent
+            while let p = parent {
+                if chosen.contains(p) { return true }
+                parent = self.item(p)?.parent
+            }
+            return false
+        }
+        let members = items.filter { chosen.contains($0.id) && !hasChosenAncestor($0) }
+        guard let top = members.last else { return nil }
+        let group = StackItem(kind: .group, name: name, parent: top.parent)
+        let memberIDs = Set(members.map(\.id))
+        let blocks = Set(members.flatMap { [$0.id] + descendants(of: $0.id) })
+        // Le bloc du groupe (membres dans leur ordre, puis le groupe) prend la place du membre le plus haut.
+        var moving = items.filter { blocks.contains($0.id) }
+        for i in moving.indices where memberIDs.contains(moving[i].id) { moving[i].parent = group.id }
+        moving.append(group)
+        let topIndex = items.lastIndex { blocks.contains($0.id) }!
+        let below = items[..<topIndex].filter { !blocks.contains($0.id) }
+        let above = items[(topIndex + 1)...].filter { !blocks.contains($0.id) }
+        items = below + moving + above
+        return group
+    }
+
+    /// Le calque de référence de la pile (au plus un).
+    public var referenceLayer: TiledLayer? { items.first { $0.isReference }?.layer }
+
+    /// Fait de l'élément le calque de référence (ou retire la référence) ; un seul à la fois.
+    public func setReference(_ id: UUID, _ value: Bool) {
+        for i in items.indices { items[i].isReference = value && items[i].id == id && items[i].layer != nil }
+    }
+
+    /// Verrouillé lui-même ou par un groupe parent.
+    public func isLocked(_ id: UUID) -> Bool {
+        var current = item(id)
+        while let c = current {
+            if c.isLocked { return true }
+            current = c.parent.flatMap { item($0) }
+        }
+        return false
     }
 
     /// Modifie les propriétés d'un élément.

@@ -17,6 +17,9 @@ public enum ProjectPackage {
         public var layers: [LayerRecord]
         /// Structure de la pile (v2). Absente en v1 : chaque calque est alors un élément racine.
         public var items: [ItemRecord]?
+        /// Couleur d'arrière-plan (RGB linéaire) et sa visibilité. Absentes : fond blanc visible.
+        public var background: [Float]? = nil
+        public var backgroundVisible: Bool? = nil
     }
 
     public struct LayerRecord: Codable, Sendable, Equatable {
@@ -46,7 +49,8 @@ public enum ProjectPackage {
     public static func journalURL(in package: URL) -> URL { package.appendingPathComponent("journal.bin") }
 
     /// Enregistre les calques. Écrit dans un dossier temporaire puis remplace l'ancien paquet (le journal est conservé).
-    public static func save(layers: [TiledLayer], to url: URL, createdAt: Date = Date(), items: [ItemRecord]? = nil) throws {
+    public static func save(layers: [TiledLayer], to url: URL, createdAt: Date = Date(), items: [ItemRecord]? = nil,
+                            background: SIMD3<Float>? = nil, backgroundVisible: Bool? = nil) throws {
         guard let first = layers.first else { throw Failure.noLayers }
         let fm = FileManager.default
         let staging = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).saving")
@@ -73,7 +77,7 @@ public enum ProjectPackage {
             formatVersion: formatVersion, width: first.width, height: first.height, tileSize: TileSize.side,
             colorSpace: "linear-display-p3-premultiplied", createdAt: createdAt, modifiedAt: Date(),
             layers: layers.map { LayerRecord(id: $0.id, name: $0.name, format: $0.format, opacity: $0.opacity, isVisible: $0.isVisible) },
-            items: items)
+            items: items, background: background.map { [$0.x, $0.y, $0.z] }, backgroundVisible: backgroundVisible)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -141,6 +145,10 @@ public enum ProjectPackage {
         public var parent: UUID?
         public var layerID: UUID?
         public var maskID: UUID?
+        /// Absents dans les projets plus anciens : faux.
+        public var isLocked: Bool? = nil
+        public var isReference: Bool? = nil
+        public var isCollapsed: Bool? = nil
     }
 
     /// Enregistre une pile complète (calques, masques, groupes, propriétés).
@@ -148,9 +156,11 @@ public enum ProjectPackage {
         let records = stack.items.map { item in
             ItemRecord(id: item.id, isGroup: item.isGroup, name: item.name, opacity: item.opacity, isVisible: item.isVisible,
                        blendMode: item.blendMode, alphaLock: item.alphaLock, isClipped: item.isClipped, parent: item.parent,
-                       layerID: item.layer?.id, maskID: item.mask?.id)
+                       layerID: item.layer?.id, maskID: item.mask?.id, isLocked: item.isLocked, isReference: item.isReference,
+                       isCollapsed: item.isCollapsed)
         }
-        try save(layers: stack.allTiledLayers, to: url, createdAt: createdAt, items: records)
+        try save(layers: stack.allTiledLayers, to: url, createdAt: createdAt, items: records,
+                 background: stack.background, backgroundVisible: stack.backgroundVisible)
     }
 
     /// Ouvre une pile (v2), ou construit une pile plate à partir des calques d'un projet v1.
@@ -175,6 +185,9 @@ public enum ProjectPackage {
                 item.alphaLock = record.alphaLock
                 item.isClipped = record.isClipped
                 item.mask = record.maskID.flatMap { byID[$0] }
+                item.isLocked = record.isLocked ?? false
+                item.isReference = record.isReference ?? false
+                item.isCollapsed = record.isCollapsed ?? false
                 return item
             }
         } else {
@@ -185,7 +198,10 @@ public enum ProjectPackage {
                 return item
             }
         }
-        return (manifest, LayerStack(width: manifest.width, height: manifest.height, format: first.format, items: items))
+        let stack = LayerStack(width: manifest.width, height: manifest.height, format: first.format, items: items)
+        if let b = manifest.background, b.count == 3 { stack.background = [b[0], b[1], b[2]] }
+        stack.backgroundVisible = manifest.backgroundVisible ?? true
+        return (manifest, stack)
     }
 }
 

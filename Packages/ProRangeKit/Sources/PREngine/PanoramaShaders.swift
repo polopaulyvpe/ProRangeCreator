@@ -358,7 +358,13 @@ enum PanoramaShaders {
         float4 c = pano.sample(s, uv, level(lod));
         if (u.layer.x > 0.0) { c = compositeLayer(c, active.sample(s, uv, level(lod)), int(u.layer.y), u.layer.x, perceptual); }
         if (u.layer.z > 0.5) { c = compositeLayer(c, above.sample(s, uv, level(lod)), 0, 1.0, perceptual); }
-        c.rgb += u.paper.rgb * (1.0 - c.a);
+        // Arrière-plan : sa couleur, ou un damier gris quand il est caché (alpha nul).
+        float3 paperColor = u.paper.rgb;
+        if (u.paper.a < 0.5) {
+            float2 cell = floor(in.position.xy / 16.0);
+            paperColor = fmod(cell.x + cell.y, 2.0) < 0.5 ? float3(0.5) : float3(0.3);
+        }
+        c.rgb += paperColor * (1.0 - c.a);
         c.rgb = floating.rgb + c.rgb * (1.0 - floating.a);
         float3 shown = toneMap(c.rgb * exp2(u.display.x), int(u.display.y));
         // Hors sélection : hachures diagonales grises qui défilent lentement.

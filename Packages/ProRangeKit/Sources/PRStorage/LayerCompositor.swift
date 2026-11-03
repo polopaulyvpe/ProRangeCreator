@@ -124,6 +124,41 @@ extension LayerStack {
         return HistoryEntry(name: "Fusionner vers le bas", layerID: lowerLayer.id, deltas: deltas, structure: (before, items))
     }
 
+    /// Fusionne plusieurs calques en un seul, à la place du plus bas d'entre eux (ordre de la pile, modes, opacités,
+    /// masques appliqués ; les groupes choisis sont ignorés). Renvoie l'entrée d'historique, ou nil s'il y a moins de deux calques.
+    public func merge(_ ids: [UUID], space: BlendSpace) -> HistoryEntry? {
+        let chosen = Set(ids)
+        let members = items.filter { chosen.contains($0.id) && $0.layer != nil }
+        guard members.count >= 2, let lowerLayer = members[0].layer else { return nil }
+        let before = items
+
+        // Comme pour Fusionner vers le bas : le plus bas sert de base, tel quel ; les autres gardent mode et opacité.
+        var base = members[0]
+        base.mask = nil
+        base.blendMode = .normal
+        base.opacity = 1
+        base.isVisible = true
+        base.isClipped = false
+        base.parent = nil
+        let rest = members.dropFirst().map { member -> StackItem in
+            var m = member
+            m.parent = nil
+            m.isVisible = true
+            m.isClipped = false
+            return m
+        }
+        let temporary = LayerStack(width: width, height: height, format: format, items: [base] + rest)
+
+        lowerLayer.beginOperation()
+        let tiles = Set(members.flatMap { ($0.layer?.storedTiles ?? []) + ($0.mask?.storedTiles ?? []) })
+        for coord in tiles {
+            lowerLayer.replaceTile(coord, withPixels: LayerCompositor.compositeTile(coord, stack: temporary, paper: nil, space: space))
+        }
+        let deltas = lowerLayer.endOperation()
+        for member in rest { remove(member.id) }
+        return HistoryEntry(name: "Fusionner", layerID: lowerLayer.id, deltas: deltas, structure: (before, items))
+    }
+
     /// Aplatit toute la pile visible en un seul calque (sans le papier).
     public func flatten(space: BlendSpace) -> HistoryEntry? {
         let before = items

@@ -420,6 +420,9 @@ struct ActionsPanel: View {
             }
             PanelSection {
                 PanelRow("Coller une image") { session.showActions = false; session.pasteImport() }
+                if session.copiedLayer != nil {
+                    PanelRow("Coller le calque copié") { session.showActions = false; session.pasteLayer() }
+                }
             }
         }
     }

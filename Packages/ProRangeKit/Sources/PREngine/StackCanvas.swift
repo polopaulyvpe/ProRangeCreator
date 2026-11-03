@@ -25,7 +25,8 @@ public final class StackCanvas {
     public var blendSpace: BlendSpace = .perceptual {
         didSet { setNeedsRefresh() }
     }
-    public var paper: SIMD3<Float> = [1, 1, 1]
+    /// Couleur d'arrière-plan de la pile (nil : cachée, fond transparent).
+    public var paper: SIMD3<Float>? { stack.backgroundVisible ? stack.background : nil }
     /// Outils qui lisent les pixels pendant le trait (doigt, clonage) : chemin CPU imposé.
     public var forceCPU = false {
         didSet { if forceCPU != oldValue { setNeedsRefresh() } }
@@ -407,6 +408,8 @@ public final class StackCanvas {
     }
 
     public func configure(_ uniforms: inout ViewUniforms) {
+        // Fond caché : alpha nul, le shader montre un damier sous les calques.
+        uniforms.paper = paper.map { [$0.x, $0.y, $0.z, 1] } ?? .zero
         guard usesFastPath, let item = stack.item(activeID) else {
             uniforms.setLayers(activeOpacity: 0, mode: .normal, aboveEnabled: false, space: blendSpace)
             return
@@ -458,7 +461,7 @@ public final class StackCanvas {
     private func recompositeOnGPU(_ tiles: Set<TileCoord>) -> Bool {
         guard let below, below.isFullResolution, let gpu = gpuCompositor else { return false }
         let roots = stack.children(of: nil)
-        let paperPixel = SIMD4<Float>(paper.x, paper.y, paper.z, 1)
+        let paperPixel = paper.map { SIMD4<Float>($0.x, $0.y, $0.z, 1) } ?? .zero
         let list = Array(tiles)
         if usesFastPath {
             guard let index = rootIndexOfActive, let above else { return false }
@@ -486,7 +489,7 @@ public final class StackCanvas {
     private func recomposite(_ tiles: Set<TileCoord>) {
         if recompositeOnGPU(tiles) { return }
         let occupied = LayerCompositor.occupiedTiles(stack)
-        let paperPixel = SIMD4<Float>(paper.x, paper.y, paper.z, 1)
+        let paperPixel = paper.map { SIMD4<Float>($0.x, $0.y, $0.z, 1) } ?? .zero
         let roots = stack.children(of: nil)
         let source = stack
         let paperColor = paper

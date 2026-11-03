@@ -82,6 +82,7 @@ extension CanvasSession {
         guard transform == nil else { return }
         strokeCancelled()
         if tool == .select, !lassoPoints.isEmpty { closeLasso() }
+        if refuseIfLocked() { return }
         guard let target = editTarget else { return }
         let mask = hasSelection ? selection : nil
         let samples = mask?.selectedDirections() ?? target.contentDirections()
