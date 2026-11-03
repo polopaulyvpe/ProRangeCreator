@@ -22,17 +22,21 @@ enum PanoramaShaders {
         float4 contentRot1;
         float4 contentRot2;
         float4 guides;      // actifs, espacement (degrés), opacité, inutilisé
-        float4 selection;   // sélection affichée, aperçu de transformation actif
-        float4 tCenter;     // transformation : origine
+        float4 selection;   // sélection affichée, aperçu de transformation actif, inutilisé, temps (hachures)
+        float4 tCenter;     // transformation (PRCore.FreeTransform) : origine
         float4 tEast;       // repère tangent en l'origine
         float4 tNorth;
         float4 tMoveInv0;   // inverse du déplacement, en colonnes
         float4 tMoveInv1;
         float4 tMoveInv2;
-        float4 tParams;     // cos(angle), sin(angle), 1/échelle x, 1/échelle y
-        float4 tH0;         // distorsion : homographie inverse (colonnes), plan gnomonique en tCenter
+        float4 tParams;     // inutilisé
+        float4 tH0;         // homographie inverse (colonnes) : plan → carré unité
         float4 tH1;
         float4 tH2;
+        float4 tS0;         // boîte source : coin haut gauche (xy), côté horizontal (zw)
+        float4 tS1;         // côté vertical (xy), plan (0 rectiligne, 1 équidistant), maillage actif
+        float4 tMisc;       // signe homogène au centre, filtre (0 plus proche, 1 bilinéaire, 2 bicubique)
+        float4 tMesh[8];    // 16 points de contrôle du maillage (deux par float4), j * 4 + i
     };
 
     struct VOut {
@@ -199,6 +203,80 @@ enum PanoramaShaders {
         return max(r, 0.0);
     }
 
+    // Maillage de la transformation (PRCore.WarpMesh) : Bézier bicubique, prolongé hors du carré unité.
+    static float4 bern(float t) { float s = 1.0 - t; return float4(s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t); }
+    static float4 bernD(float t) {
+        float s = 1.0 - t;
+        return float4(-3.0 * s * s, 3.0 * s * s - 6.0 * t * s, 6.0 * t * s - 3.0 * t * t, 3.0 * t * t);
+    }
+    static float2 meshPoint(constant ViewUniforms& u, int k) {
+        float4 v = u.tMesh[k / 2];
+        return (k % 2 == 0) ? v.xy : v.zw;
+    }
+
+    // PRCore.WarpMesh.inverse : méthode de Newton en partant de m.
+    static bool meshInverse(float2 m, thread float2& w, constant ViewUniforms& u) {
+        w = m;
+        for (int it = 0; it < 16; it++) {
+            float2 c = clamp(w, 0.0, 1.0);
+            float4 bu = bern(c.x), bv = bern(c.y), du = bernD(c.x), dv = bernD(c.y);
+            float2 val = float2(0.0), gu = float2(0.0), gv = float2(0.0);
+            for (int j = 0; j < 4; j++) {
+                for (int i = 0; i < 4; i++) {
+                    float2 p = meshPoint(u, j * 4 + i);
+                    val += p * (bu[i] * bv[j]);
+                    gu += p * (du[i] * bv[j]);
+                    gv += p * (bu[i] * dv[j]);
+                }
+            }
+            if (w.x < 0.0 || w.x > 1.0) { gu = float2(1.0, 0.0); }
+            if (w.y < 0.0 || w.y > 1.0) { gv = float2(0.0, 1.0); }
+            float2 r = w + val - c - m;
+            if (length(r) < 1e-6) { return true; }
+            float det = gu.x * gv.y - gv.x * gu.y;
+            if (abs(det) < 1e-9) { return false; }
+            float2 step = float2(gv.y * r.x - gv.x * r.y, -gu.y * r.x + gu.x * r.y) / det;
+            float l = length(step);
+            if (l > 0.5) { step *= 0.5 / l; }
+            w -= step;
+        }
+        return true;
+    }
+
+    // PRCore.FreeTransform.Resolved.inverse : direction source d'une direction vue ; false si rien n'y arrive.
+    static bool transformSource(float3 d, constant ViewUniforms& u, thread float3& src) {
+        float3 e = u.tMoveInv0.xyz * d.x + u.tMoveInv1.xyz * d.y + u.tMoveInv2.xyz * d.z;
+        float3 o = u.tCenter.xyz;
+        float3 east = u.tEast.xyz, north = u.tNorth.xyz;
+        bool equidistant = u.tS1.z > 0.5;
+        float2 q;
+        if (equidistant) {
+            float cosA = dot(o, e);
+            float3 t = e - o * cosA;
+            float sinA = length(t);
+            q = sinA > 1e-7 ? float2(dot(t, east), dot(t, north)) * (atan2(sinA, cosA) / sinA) : float2(0.0);
+        } else {
+            float z = dot(e, o);
+            if (z <= 1e-6) { return false; }
+            q = float2(dot(e, east), dot(e, north)) / z;
+        }
+        float3 h = u.tH0.xyz * q.x + u.tH1.xyz * q.y + u.tH2.xyz;
+        if (h.z * u.tMisc.x <= 1e-9) { return false; }
+        float2 w = h.xy / h.z;
+        if (u.tS1.w > 0.5) {
+            float2 m = w;
+            if (!meshInverse(m, w, u)) { return false; }
+        }
+        float2 p = u.tS0.xy + u.tS0.zw * w.x + u.tS1.xy * w.y;
+        if (equidistant) {
+            float a = length(p);
+            src = a > 1e-7 ? o * cos(a) + (east * p.x + north * p.y) / a * sin(a) : o;
+        } else {
+            src = normalize(o + east * p.x + north * p.y);
+        }
+        return true;
+    }
+
     // PRCore.Compositing.composite : couleurs linéaires prémultipliées en entrée et en sortie.
     static float4 compositeLayer(float4 backdrop, float4 source, int mode, float opacity, bool perceptual) {
         float sa = source.w * opacity;
@@ -221,7 +299,8 @@ enum PanoramaShaders {
                                      texture2d<float> above [[texture(2)]],
                                      texture2d<float> selectionTex [[texture(3)]],
                                      texture2d<float> floatingTex [[texture(4)]],
-                                     sampler s [[sampler(0)]]) {
+                                     sampler s [[sampler(0)]],
+                                     sampler nearestS [[sampler(1)]]) {
         float morph = u.unfolded.w;
         float2 flatUV = unfoldedUV(in.ndc, u);
         float2 uv;
@@ -259,40 +338,14 @@ enum PanoramaShaders {
             uv = uvFromDirection(d);
         }
         // Sélection, et aperçu de transformation : la direction vue est ramenée à sa source par la transformation inverse
-        // (même calcul que PRCore.SphericalTransform.inverse).
+        // (même calcul que PRCore.FreeTransform.Resolved.inverse).
         float selectionValue = 1.0;
         float4 floating = float4(0.0);
         if (u.selection.y > 0.5) {
-            float3 d = directionFromUV(uv);
-            float3 o = u.tCenter.xyz;
-            float3 src = o;
-            bool valid = true;
-            if (u.selection.z > 0.5) {
-                // Distorsion (PRCore.SphericalDistort.inverse) : plan gnomonique, homographie inverse.
-                float z = dot(d, o);
-                valid = z > 1e-4;
-                if (valid) {
-                    float2 g = float2(dot(d, u.tEast.xyz), dot(d, u.tNorth.xyz)) / z;
-                    float3 h = u.tH0.xyz * g.x + u.tH1.xyz * g.y + u.tH2.xyz;
-                    valid = abs(h.z) > 1e-9;
-                    if (valid) { src = normalize(o + u.tEast.xyz * (h.x / h.z) + u.tNorth.xyz * (h.y / h.z)); }
-                }
-            } else {
-                float3 e = u.tMoveInv0.xyz * d.x + u.tMoveInv1.xyz * d.y + u.tMoveInv2.xyz * d.z;
-                float cosA = dot(o, e);
-                float3 t = e - o * cosA;
-                float sinA = length(t);
-                float2 p = float2(0.0);
-                if (sinA > 1e-7) { p = float2(dot(t, u.tEast.xyz), dot(t, u.tNorth.xyz)) * (atan2(sinA, cosA) / sinA); }
-                float cs = u.tParams.x;
-                float sn = u.tParams.y;
-                float2 q = float2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs) * u.tParams.zw;
-                float a = length(q);
-                if (a > 1e-7) { src = o * cos(a) + (u.tEast.xyz * q.x + u.tNorth.xyz * q.y) / a * sin(a); }
-            }
-            if (valid) {
+            float3 src;
+            if (transformSource(directionFromUV(uv), u, src)) {
                 float2 suv = uvFromDirection(src);
-                floating = floatingTex.sample(s, suv, level(lod));
+                floating = u.tMisc.y < 0.5 ? floatingTex.sample(nearestS, suv) : floatingTex.sample(s, suv, level(lod));
                 if (u.selection.x > 0.5) { selectionValue = selectionTex.sample(s, suv, level(lod)).a; }
             } else if (u.selection.x > 0.5) {
                 selectionValue = 0.0;
@@ -308,8 +361,14 @@ enum PanoramaShaders {
         c.rgb += u.paper.rgb * (1.0 - c.a);
         c.rgb = floating.rgb + c.rgb * (1.0 - floating.a);
         float3 shown = toneMap(c.rgb * exp2(u.display.x), int(u.display.y));
-        // Hors sélection : assombri.
-        if (u.selection.x > 0.5) { shown *= mix(0.5, 1.0, clamp(selectionValue, 0.0, 1.0)); }
+        // Hors sélection : hachures diagonales grises qui défilent lentement.
+        if (u.selection.x > 0.5) {
+            float outside = 1.0 - clamp(selectionValue, 0.0, 1.0);
+            float phase = fract((in.position.x + in.position.y) / 18.0 - u.selection.w * 0.4);
+            float stripe = smoothstep(0.0, 0.08, phase) * (1.0 - smoothstep(0.22, 0.3, phase));
+            float3 hatched = mix(shown, float3(0.56), 0.14 + 0.4 * stripe);
+            shown = mix(shown, hatched, outside);
+        }
         return float4(mix(shown, float3(0.2, 0.75, 1.0), guide), 1.0);
     }
     """

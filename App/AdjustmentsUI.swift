@@ -67,8 +67,7 @@ struct FilterSettings {
 extension CanvasSession {
     func openFilter(_ kind: FilterKind) {
         strokeCancelled()
-        cancelTransform()
-        cancelDistort()
+        applyTransform()
         if activeFilter != nil { _ = canvas?.endFilter(apply: false) }
         activeFilter = kind
         canvas?.beginFilter()

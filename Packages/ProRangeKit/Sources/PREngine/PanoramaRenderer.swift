@@ -2,7 +2,7 @@ import Metal
 import simd
 import PRCore
 
-/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : vingt-quatre `float4`).
+/// Uniformes du shader de panorama (même disposition que `ViewUniforms` en MSL : trente-cinq `float4`).
 public struct ViewUniforms {
     public var rot0: SIMD4<Float>
     public var rot1: SIMD4<Float>
@@ -32,6 +32,18 @@ public struct ViewUniforms {
     public var tH0: SIMD4<Float> = .zero
     public var tH1: SIMD4<Float> = .zero
     public var tH2: SIMD4<Float> = .zero
+    public var tS0: SIMD4<Float> = .zero
+    public var tS1: SIMD4<Float> = .zero
+    public var tMisc: SIMD4<Float> = .zero
+    // Maillage : `float4 tMesh[8]` en MSL.
+    public var tMesh0: SIMD4<Float> = .zero
+    public var tMesh1: SIMD4<Float> = .zero
+    public var tMesh2: SIMD4<Float> = .zero
+    public var tMesh3: SIMD4<Float> = .zero
+    public var tMesh4: SIMD4<Float> = .zero
+    public var tMesh5: SIMD4<Float> = .zero
+    public var tMesh6: SIMD4<Float> = .zero
+    public var tMesh7: SIMD4<Float> = .zero
 
     public init(_ p: ProjectionParameters, viewportHeight: Int, textureHeight: Int,
                 exposure: Double = 0, toneMapping: ToneMapping = .clip, background: SIMD3<Float> = [0.08, 0.08, 0.09],
@@ -60,39 +72,46 @@ public struct ViewUniforms {
         contentRot2 = column(inverse.columns.2, 0)
     }
 
-    /// Sélection affichée (le reste est assombri) et aperçu de transformation du contenu flottant.
-    public mutating func setSelection(visible: Bool, transform: SphericalTransform?) {
-        selection = [visible ? 1 : 0, transform == nil ? 0 : 1, 0, 0]
-        guard let transform else { return }
+    /// Sélection affichée (le reste est hachuré, les hachures défilent avec `time` en secondes) et aperçu de la
+    /// transformation libre du contenu flottant (`filter` : plus proche voisin ou bilinéaire ; bicubique montré en bilinéaire).
+    public mutating func setSelection(visible: Bool, freeTransform: FreeTransform?, time: Double = 0,
+                                      filter: ResamplingFilter = .bilinear) {
+        let phase = Float(time.truncatingRemainder(dividingBy: 1000))
+        guard let transform = freeTransform, let resolved = transform.resolved() else {
+            selection = [visible ? 1 : 0, 0, 0, phase]
+            return
+        }
+        selection = [visible ? 1 : 0, 1, 0, phase]
         func vector(_ v: SIMD3<Double>) -> SIMD4<Float> { [Float(v.x), Float(v.y), Float(v.z), 0] }
-        let frame = transform.frame
-        tCenter = vector(frame.center)
-        tEast = vector(frame.east)
-        tNorth = vector(frame.north)
-        let inverse = transform.move.transpose
-        tMoveInv0 = vector(inverse.columns.0)
-        tMoveInv1 = vector(inverse.columns.1)
-        tMoveInv2 = vector(inverse.columns.2)
-        tParams = [Float(cos(transform.angle)), Float(sin(transform.angle)),
-                   Float(1 / transform.scale.x), Float(1 / transform.scale.y)]
+        tCenter = vector(resolved.frame.center)
+        tEast = vector(resolved.frame.east)
+        tNorth = vector(resolved.frame.north)
+        let moveInverse = resolved.move.transpose
+        tMoveInv0 = vector(moveInverse.columns.0)
+        tMoveInv1 = vector(moveInverse.columns.1)
+        tMoveInv2 = vector(moveInverse.columns.2)
+        let h = resolved.inverseHomography
+        tH0 = vector(h.columns.0)
+        tH1 = vector(h.columns.1)
+        tH2 = vector(h.columns.2)
+        tS0 = [Float(transform.sourceOrigin.x), Float(transform.sourceOrigin.y), Float(transform.sourceX.x), Float(transform.sourceX.y)]
+        tS1 = [Float(transform.sourceY.x), Float(transform.sourceY.y), transform.plane == .equidistant ? 1 : 0,
+               resolved.meshIsIdentity ? 0 : 1]
+        tMisc = [Float(resolved.sign), filter == .nearest ? 0 : 1, 0, 0]
+        let p = transform.mesh.points.map { SIMD2<Float>(Float($0.x), Float($0.y)) }
+        func pair(_ k: Int) -> SIMD4<Float> { [p[2 * k].x, p[2 * k].y, p[2 * k + 1].x, p[2 * k + 1].y] }
+        (tMesh0, tMesh1, tMesh2, tMesh3) = (pair(0), pair(1), pair(2), pair(3))
+        (tMesh4, tMesh5, tMesh6, tMesh7) = (pair(4), pair(5), pair(6), pair(7))
+    }
+
+    /// Sélection affichée et aperçu d'une transformation par déplacement, échelle et rotation.
+    public mutating func setSelection(visible: Bool, transform: SphericalTransform?) {
+        setSelection(visible: visible, freeTransform: transform.map { FreeTransform($0) })
     }
 
     /// Aperçu d'une distorsion par quatre coins du contenu flottant.
     public mutating func setSelection(visible: Bool, distort: SphericalDistort) {
-        func vector(_ v: SIMD3<Double>) -> SIMD4<Float> { [Float(v.x), Float(v.y), Float(v.z), 0] }
-        guard let homography = distort.homography else {
-            selection = [visible ? 1 : 0, 0, 0, 0]
-            return
-        }
-        selection = [visible ? 1 : 0, 1, 1, 0]
-        let frame = distort.frame
-        tCenter = vector(frame.center)
-        tEast = vector(frame.east)
-        tNorth = vector(frame.north)
-        let inverse = homography.inverse.matrix
-        tH0 = vector(inverse.columns.0)
-        tH1 = vector(inverse.columns.1)
-        tH2 = vector(inverse.columns.2)
+        setSelection(visible: visible, freeTransform: FreeTransform(distort))
     }
 
     public mutating func setGuides(enabled: Bool, spacingDegrees: Double = 15, opacity: Double = 0.45) {
@@ -186,6 +205,7 @@ public final class PanoramaRenderer {
         encoder.setFragmentTexture(layers.selection ?? emptyTexture, index: 3)
         encoder.setFragmentTexture(layers.floating ?? emptyTexture, index: 4)
         encoder.setFragmentSamplerState(filtering == .linear ? linearSampler : nearestSampler, index: 0)
+        encoder.setFragmentSamplerState(nearestSampler, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 

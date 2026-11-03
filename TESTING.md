@@ -73,6 +73,9 @@ gh run view --log-failed
 | `OperationJournalTests` | Ajout, lecture par index, écriture après lecture en fin de fichier, relecture complète |
 | `SpillTests` | Tuiles déversées relues à l'identique ; peindre dessus, annuler et rétablir restent exacts ; `unspillAll` ne laisse aucun fichier ; un calque déversé se sauvegarde normalement ; historique déversé exact au bit près ; fichiers d'historique supprimés avec les entrées |
 | `MemoryBudgetManagerTests` | Mémoire suffisante : rien ne bouge ; pression critique : déversement sauf la zone de travail, contenu intact, conseil de fusion, purge ; mémoire inconnue : plafond résident et simple recompression |
+| `FreeTransformTests` | Transformation libre : identité et boîte ajustée (plan rectiligne ou équidistant), mêmes résultats que l'ancienne transformation et l'ancienne distorsion, aller-retour avec coins, maillage et déplacement, maillage qui suit le doigt, retournement, échelle par coin et par côté, boîte seule tournée sans bouger le contenu, Rétablir |
+| `FreeTransformPixelsTests` | Découpe, déplacement, collage : une seule entrée d'historique qui rend le calque d'origine au bit près, la sélection suit ; calque entier ; trois filtres ; bicubique sans valeur négative |
+| `FreeTransformGPUTests` | Aperçu GPU (coins, rotation, maillage, déplacement) égal au collage CPU sur plus de 99,5 % des pixels |
 
 ## Mesures sur l'appareil
 

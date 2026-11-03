@@ -35,7 +35,11 @@ final class SelectionDisplayTests: XCTestCase {
 
         let dimmed = try render { $0.setSelection(visible: true, transform: nil) }
         XCTAssertEqual(red(dimmed, 256, 128), 1, accuracy: 0.01, "papier blanc dans la sélection")
-        XCTAssertEqual(red(dimmed, 20, 128), 0.5, accuracy: 0.01, "assombri hors sélection")
+        // Hors sélection : hachures grises (fond voilé, rayures plus foncées).
+        let outside = (0..<40).map { red(dimmed, 10 + $0, 128) }
+        XCTAssertLessThan(outside.max() ?? 1, 0.97, "voilé partout hors sélection")
+        XCTAssertGreaterThan((outside.max() ?? 0) - (outside.min() ?? 0), 0.1, "rayures")
+        XCTAssertGreaterThan(outside.min() ?? 0, 0.6)
 
         // Contenu flottant : un disque rouge, montré déplacé de 90° vers +X.
         let floating = TiledLayer(name: "f", width: 512, height: 256)

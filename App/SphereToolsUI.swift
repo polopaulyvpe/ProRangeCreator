@@ -174,7 +174,7 @@ struct ToolOptions: View {
             .pickerStyle(.segmented)
             .frame(width: 160)
         case .select:
-            SelectionOptions(session: session)
+            EmptyView() // barre du bas (SelectionToolbar)
         case .effect:
             Text("Peins l'effet filtré").font(.caption).foregroundStyle(.secondary).fixedSize()
         }

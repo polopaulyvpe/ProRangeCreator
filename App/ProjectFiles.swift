@@ -100,6 +100,8 @@ extension CanvasSession {
     /// avec la vignette de la galerie et le timelapse.
     func saveProject(silently: Bool = false) {
         strokeCancelled()
+        // Le contenu d'une transformation en cours est découpé du calque : il est recollé avant d'enregistrer.
+        applyTransform()
         let library = Self.library
         do {
             var url = projectURL ?? library.uniqueURL(for: projectName)
@@ -206,7 +208,7 @@ extension CanvasSession {
     }
 
     private var isBusy: Bool {
-        canvas?.isStroking == true || isExporting || activeFilter != nil || transform != nil || distort != nil
+        canvas?.isStroking == true || isExporting || activeFilter != nil || transform != nil
     }
 
     private func autosaveIfIdle() {

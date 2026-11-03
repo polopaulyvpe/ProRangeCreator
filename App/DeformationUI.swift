@@ -5,7 +5,7 @@ import simd
 import SwiftUI
 import UIKit
 
-/// Lot C : liquify, QuickShape, texte, distorsion par quatre coins.
+/// Lot C : liquify, QuickShape, texte (la distorsion est un mode de la transformation, voir TransformUI.swift).
 extension CanvasSession {
     // MARK: - Liquify
 
@@ -66,70 +66,6 @@ extension CanvasSession {
         canvas.add(dabs)
         quickShapeApplied = true
         if case .line = shape { fileMessage = "QuickShape : ligne" } else { fileMessage = "QuickShape : cercle" }
-    }
-
-    // MARK: - Distorsion
-
-    func startDistort() {
-        strokeCancelled()
-        cancelTransform()
-        guard let target = editTarget else { return }
-        let mask = hasSelection ? selection : nil
-        let origin = mask?.centroid() ?? view.direction(atNDC: .zero, aspect: lastAspect) ?? [0, 0, -1]
-        let half = min(1.0, max(5 * .pi / 180, mask?.angularRadius(around: origin) ?? 20 * .pi / 180))
-        canvas?.setFloating(target.masked(by: mask))
-        distort = SphericalDistort(origin: origin, halfAngle: half)
-    }
-
-    /// Prend la poignée la plus proche du doigt (en NDC), s'il y en a une assez près.
-    func grabDistortCorner(ndc: SIMD2<Double>) {
-        guard let distort else { return }
-        let parameters = view.parameters(aspect: lastAspect)
-        var best: (index: Int, distance: Double)?
-        for (i, d) in distort.targetDirections.enumerated() {
-            guard let p = parameters.ndc(of: d) else { continue }
-            let distance = simd_distance(p, ndc)
-            if distance < (best?.distance ?? 0.15) { best = (i, distance) }
-        }
-        activeCorner = best?.index
-    }
-
-    func moveDistortCorner(to d: Vec3) {
-        guard let index = activeCorner else { return }
-        distort?.moveCorner(index, to: d)
-    }
-
-    func applyDistort() {
-        guard let d = distort, let target = editTarget else { return }
-        defer { cancelDistort() }
-        guard d.sourceCorners != d.targetCorners, d.homography != nil else { return }
-        let mask = hasSelection ? selection : nil
-        target.beginOperation()
-        target.applyDistort(d, selection: mask)
-        let deltas = target.endOperation()
-        var others: [(layerID: UUID, deltas: [TileDelta])] = []
-        if let mask {
-            mask.layer.beginOperation()
-            mask.distort(d)
-            let maskDeltas = mask.layer.endOperation()
-            if !maskDeltas.isEmpty { others.append((mask.layer.id, maskDeltas)) }
-        }
-        guard !deltas.isEmpty || !others.isEmpty else { return }
-        if deltas.isEmpty, let first = others.first {
-            history.record(HistoryEntry(name: "Distorsion", layerID: first.layerID, deltas: first.deltas))
-        } else {
-            history.record(HistoryEntry(name: "Distorsion", layerID: target.id, deltas: deltas, otherLayers: others))
-        }
-        refreshHistory()
-        selectionUpdated()
-        structureChanged()
-    }
-
-    func cancelDistort() {
-        guard distort != nil else { return }
-        distort = nil
-        activeCorner = nil
-        canvas?.setFloating(nil)
     }
 
     // MARK: - Texte
@@ -204,42 +140,6 @@ struct LiquifyOptions: View {
     }
 }
 
-/// Poignées de la distorsion, redessinées à chaque image (la vue peut bouger pendant qu'on tire les coins).
-struct DistortHandlesOverlay: View {
-    let session: CanvasSession
-
-    var body: some View {
-        if session.distort != nil {
-            TimelineView(.animation) { _ in
-                GeometryReader { geo in
-                    let aspect = Double(geo.size.width / max(geo.size.height, 1))
-                    let parameters = session.view.parameters(aspect: aspect)
-                    let points: [CGPoint?] = (session.distort?.targetDirections ?? []).map { d in
-                        parameters.ndc(of: d).map { CGPoint(x: ($0.x + 1) / 2 * geo.size.width, y: (1 - $0.y) / 2 * geo.size.height) }
-                    }
-                    ZStack {
-                        Path { path in
-                            let visible = points.compactMap { $0 }
-                            guard visible.count == 4 else { return }
-                            path.addLines(visible + [visible[0]])
-                        }
-                        .stroke(.white.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                        ForEach(0..<points.count, id: \.self) { i in
-                            if let p = points[i] {
-                                Circle()
-                                    .fill(.white)
-                                    .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1))
-                                    .frame(width: 22, height: 22)
-                                    .position(p)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Saisie d'un texte, posé sur un nouveau calque face à la vue.
 struct TextSheet: View {
     @Bindable var session: CanvasSession
@@ -270,25 +170,6 @@ struct TextSheet: View {
                     .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-        }
-    }
-}
-
-/// Coins de la distorsion en cours.
-struct DistortPanel: View {
-    @Bindable var session: CanvasSession
-
-    var body: some View {
-        if session.distort != nil {
-            HStack(spacing: 14) {
-                Text("Tire les quatre coins").font(.caption).foregroundStyle(.secondary)
-                Button("Annuler") { session.cancelDistort() }
-                Button("Appliquer") { session.applyDistort() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .font(.callout)
-            .padding(10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }

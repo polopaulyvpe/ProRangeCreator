@@ -41,6 +41,12 @@ extension CanvasSession {
 
     /// Pinceau, doigt ou gomme : un premier toucher choisit l'outil, un second ouvre la bibliothèque (comme Procreate).
     func tapPaintTool(_ target: PaintTool) {
+        if transform != nil {
+            // Choisir un outil termine la transformation.
+            applyTransform()
+            tool = target
+            return
+        }
         if tool == target {
             showBrushes = true
         } else {
@@ -67,8 +73,14 @@ struct TopBar: View {
                 session.showAdjustments = true
             }
             .popover(isPresented: $session.showAdjustments, arrowEdge: .top) { AdjustmentsPanel(session: session) }
-            BarCircleButton(symbol: "lasso", active: session.tool == .select) {
-                session.tool = session.tool == .select ? .brush : .select
+            BarCircleButton(symbol: "lasso", active: (session.tool == .select && session.transform == nil) || session.transformFromSelection) {
+                if session.transform != nil {
+                    // Depuis la transformation : le contenu est recollé et l'outil Sélection s'ouvre.
+                    session.applyTransform()
+                    session.tool = .select
+                } else {
+                    session.tool = session.tool == .select ? .brush : .select
+                }
             }
             BarCircleButton(symbol: "location.north.fill", active: session.transform != nil) {
                 if session.transform == nil { session.startTransform() } else { session.applyTransform() }
@@ -260,12 +272,10 @@ struct ContextBar: View {
     var body: some View {
         Group {
             if session.transform != nil {
-                TransformPanel(session: session)
-            } else if session.distort != nil {
-                DistortPanel(session: session)
+                EmptyView()
             } else if session.activeFilter != nil {
                 FilterPanel(session: session)
-            } else if session.tool != .brush, session.tool != .eraser {
+            } else if session.tool != .brush, session.tool != .eraser, session.tool != .select {
                 HStack(spacing: 14) {
                     Label(session.tool.label, systemImage: session.tool.symbol).font(.callout.weight(.semibold))
                     ToolOptions(session: session)
@@ -281,17 +291,17 @@ struct ContextBar: View {
     }
 }
 
-/// Message bref (annuler, rétablir…), comme le bandeau de Procreate.
+/// Message bref (annuler, rétablir, copier et coller…) : bandeau gris sur toute la largeur, sous la barre du haut.
 struct ToastView: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 9)
-            .background(Capsule().fill(Color.black.opacity(0.75)))
+            .font(.system(size: 16))
+            .foregroundStyle(.white.opacity(0.9))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(Color(white: 0.42).opacity(0.92))
             .transition(.opacity)
     }
 }

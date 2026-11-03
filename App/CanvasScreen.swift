@@ -115,7 +115,12 @@ final class CanvasSession {
     private(set) var canRedo = false
     var recentColors: [SIMD3<Double>] = []
     private(set) var blendSpace: BlendSpace = .perceptual
-    var tool: PaintTool = .brush
+    var tool: PaintTool = .brush {
+        didSet {
+            // On quitte la sélection : un tracé à main levée resté ouvert est fermé.
+            if oldValue == .select, tool != .select, !lassoPoints.isEmpty { closeLasso() }
+        }
+    }
     var brush = BrushSettings.defaultBrush
     var eraser = BrushSettings.defaultEraser
     /// Fichier de « Mes pinceaux » d'où viennent le pinceau et la gomme (nil : pinceau intégré ou jamais enregistré).
@@ -148,21 +153,44 @@ final class CanvasSession {
     @ObservationIgnored var smudgePrevious: [Vec3] = []
     @ObservationIgnored var lastAspect = 1.5
 
-    // Sélection et transformation (voir SelectionUI.swift)
+    // Sélection (voir SelectionUI.swift)
     @ObservationIgnored var selection: SelectionMask?
     var hasSelection = false
-    var selectionKind: SelectionKind = .rectangle
-    var selectionCombine: SelectionCombine = .replace
+    var selectionKind: SelectionKind = .freehand
+    var selectionCombine: SelectionCombine = .add
     var selectionThreshold = 0.1
-    /// Tracé en cours, en NDC (affiché par-dessus la toile).
+    /// Rectangle ou ellipse en cours, en NDC (affiché par-dessus la toile).
     var selectionDrag: [SIMD2<Double>] = []
-    var transform: SphericalTransform?
+    /// Tracé à main levée en cours, sur la sphère : il reste ouvert entre deux touchers jusqu'à ce qu'on le ferme.
+    var lassoPoints: [Vec3] = []
+    @ObservationIgnored var lassoTouchStart = 0
+    @ObservationIgnored var lassoClosing = false
+    /// Un doigt ou le Pencil trace la sélection en ce moment.
+    @ObservationIgnored var selectionTouchActive = false
+    @ObservationIgnored var automaticStart: (ndc: SIMD2<Double>, direction: Vec3, threshold: Double)?
+    var selectionColorFill = false
+    var savedSelections: [SavedSelection] = []
+    var showFeather = false
+    var showSavedSelections = false
+    /// Taille de la vue de la toile, en points (poignées et tracés à l'écran).
+    @ObservationIgnored var viewSize = CGSize(width: 1180, height: 820)
+
+    // Transformation (voir TransformUI.swift)
+    var transform: FreeTransform?
+    var transformMode: TransformMode = .uniform
+    var transformSnapping = false
+    var transformAdvancedMesh = false
+    var transformFilter: ResamplingFilter = .bilinear
+    /// Largeur et hauteur affichées pendant qu'on étire.
+    var transformSize: SIMD2<Int>?
+    var transformFromSelection = false
+    @ObservationIgnored var transformWork: TransformWork?
+    @ObservationIgnored var transformDrag: TransformDrag?
 
     // Lot C (voir DeformationUI.swift)
     var liquifyMode: LiquifyMode = .push
     var liquifyStrength = 0.6
     var quickShapeEnabled = true
-    var distort: SphericalDistort?
     var showTextSheet = false
 
     // Phase 6 (voir AdjustmentsUI.swift)
@@ -206,7 +234,6 @@ final class CanvasSession {
     /// Mélange humide : une réserve par copie de symétrie, et la toile d'avant le trait d'où elles prennent la couleur.
     @ObservationIgnored private var wetMixers: [WetMixer] = []
     @ObservationIgnored private var wetSampler: LayerSampler?
-    @ObservationIgnored var activeCorner: Int?
     @ObservationIgnored var quickShapePoints: [Vec3] = []
     @ObservationIgnored var quickShapePressure = 1.0
     @ObservationIgnored var quickShapeLastMove: CFTimeInterval = 0
@@ -352,16 +379,12 @@ final class CanvasSession {
         lastAspect = aspect
         guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
         lastDirection = d
-        if distort != nil {
-            grabDistortCorner(ndc: ndc)
-            return
-        }
         if transform != nil {
-            moveTransform(to: d)
+            transformBegan(ndc: ndc)
             return
         }
         if tool == .select {
-            selectionBegan(ndc: ndc, direction: d)
+            selectionBegan(ndc: ndc)
             return
         }
         switch tool {
@@ -423,7 +446,11 @@ final class CanvasSession {
         let mapped = alreadyMapped ? pressure : preferences.mappedPressure(pressure)
         let (ndc, pressure) = alreadyMapped ? (ndc, mapped) : stabilize(ndc, mapped)
         lastAspect = aspect
-        if tool == .select, transform == nil {
+        if transform != nil {
+            transformMoved(ndc: ndc)
+            return
+        }
+        if tool == .select {
             selectionMoved(ndc: ndc)
             return
         }
@@ -436,14 +463,6 @@ final class CanvasSession {
             lastMoveTime = now
         }
         lastDirection = d
-        if distort != nil {
-            moveDistortCorner(to: d)
-            return
-        }
-        if transform != nil {
-            moveTransform(to: d)
-            return
-        }
         guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
         switch tool {
         case .smudge, .liquify, .clone, .effect:
@@ -602,7 +621,7 @@ final class CanvasSession {
     func strokePredicted(_ points: [(ndc: SIMD2<Double>, pressure: Double, tilt: Double, azimuth: SIMD2<Double>?)], aspect: Double) {
         guard let canvas, canvas.isStroking else { return }
         guard canvas.usesFastPath, tool == .brush || tool == .eraser, stabilizer == nil, !quickShapeApplied,
-              transform == nil, distort == nil, !points.isEmpty else {
+              transform == nil, tool != .select, !points.isEmpty else {
             canvas.setPrediction([])
             return
         }
@@ -651,11 +670,10 @@ final class CanvasSession {
             }
         }
         stopQuickShapeWatch()
-        if distort != nil {
-            activeCorner = nil
+        if transform != nil {
+            transformEnded()
             return
         }
-        if transform != nil { return }
         if tool == .select {
             selectionEnded()
             return
@@ -683,11 +701,13 @@ final class CanvasSession {
         stabilizer = nil
         wetSampler = nil
         canvas?.cancelStroke()
+        if transformDrag != nil { transformDragCancelled() }
+        if tool == .select, selectionTouchActive { selectionCancelled() }
     }
 
     /// Outils dont le trait est stabilisé (pas la sélection, ni les poignées de transformation).
     private var stabilizesStroke: Bool {
-        transform == nil && distort == nil && [PaintTool.brush, .eraser, .smudge, .clone, .effect, .liquify].contains(tool)
+        transform == nil && [PaintTool.brush, .eraser, .smudge, .clone, .effect, .liquify].contains(tool)
     }
 
     /// Point et pression stabilisés (inchangés sans stabilisateur).
@@ -702,7 +722,6 @@ final class CanvasSession {
     func undo() {
         strokeCancelled()
         cancelTransform()
-        cancelDistort()
         if let entry = try? history.undo(in: historyTarget) {
             invalidate(entry)
             showToast("Annuler : \(entry.name)")
@@ -715,7 +734,6 @@ final class CanvasSession {
     func redo() {
         strokeCancelled()
         cancelTransform()
-        cancelDistort()
         if let entry = try? history.redo(in: historyTarget) {
             invalidate(entry)
             showToast("Rétablir : \(entry.name)")
@@ -741,6 +759,9 @@ final class CanvasSession {
     /// Remplace la pile (nouveau projet, ouverture) : caches GPU reconstruits, historique vidé.
     func replaceStack(_ newStack: LayerStack) {
         strokeCancelled()
+        discardTransform()
+        lassoPoints = []
+        savedSelections = []
         stack = newStack
         history = UndoRedoManager(maxSteps: preferences.historyLimit)
         // Les textures d'affichage ont la taille de la toile : une autre résolution (projet 4K après un 8K,
@@ -781,6 +802,7 @@ final class CanvasSession {
 
     func selectLayer(_ id: UUID) {
         strokeCancelled()
+        applyTransform()
         activeID = id
         paintingMask = false
         structureChanged()
@@ -859,7 +881,13 @@ final class CanvasMTKView: MTKView {
 
     private var fingerPainting: Bool { coordinator?.session.preferences.fingerPainting ?? false }
 
-    private func canDraw(_ touch: UITouch) -> Bool { touch.type == .pencil || fingerPainting }
+    /// Le doigt trace aussi : préférence « dessiner au doigt », outil Sélection, ou poignées d'une transformation.
+    private var fingerDraws: Bool {
+        guard let session = coordinator?.session else { return false }
+        return session.preferences.fingerPainting || session.tool == .select || session.transform != nil
+    }
+
+    private func canDraw(_ touch: UITouch) -> Bool { touch.type == .pencil || fingerDraws }
 
     /// Un trait est en cours (la pipette au doigt ne doit pas l'interrompre : main posée sur l'écran).
     var isDrawing: Bool { drawingTouch != nil }
@@ -867,7 +895,7 @@ final class CanvasMTKView: MTKView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let session = coordinator?.session else { return }
         // Doigts : réservés à la navigation (reconnaisseurs de gestes), sauf en mode « dessiner au doigt ».
-        if fingerPainting, (event?.allTouches?.filter { $0.type != .pencil }.count ?? 0) > 1 {
+        if fingerDraws, (event?.allTouches?.filter { $0.type != .pencil }.count ?? 0) > 1 {
             session.strokeCancelled()
             drawingTouch = nil
             return
@@ -918,7 +946,7 @@ final class CanvasMTKView: MTKView {
     weak var panGesture: UIPanGestureRecognizer?
 
     func applyTouchPreferences() {
-        panGesture?.minimumNumberOfTouches = fingerPainting ? 2 : 1
+        panGesture?.minimumNumberOfTouches = fingerDraws ? 2 : 1
     }
 }
 
@@ -956,11 +984,10 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         canvas.configure(&uniforms)
         uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
         uniforms.setGuides(enabled: session.guidesEnabled || session.isNavigating, spacingDegrees: session.guideSpacing)
-        if let distort = session.distort {
-            uniforms.setSelection(visible: session.hasSelection, distort: distort)
-        } else {
-            uniforms.setSelection(visible: session.hasSelection, transform: session.transform)
-        }
+        // Pendant une transformation, pas de hachures : seule la boîte est montrée.
+        uniforms.setSelection(visible: session.hasSelection && session.transform == nil, freeTransform: session.transform,
+                              time: CACurrentMediaTime(), filter: session.transformFilter)
+        if session.viewSize != view.bounds.size { session.viewSize = view.bounds.size }
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()
@@ -1121,7 +1148,8 @@ struct MetalCanvas: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: CanvasMTKView, context: Context) {
-        _ = session.preferences.fingerPainting // observé : la préférence s'applique tout de suite
+        // Observés : la préférence, l'outil Sélection et la transformation s'appliquent tout de suite.
+        _ = (session.preferences.fingerPainting, session.tool, session.transform != nil)
         uiView.applyTouchPreferences()
     }
 }
@@ -1139,7 +1167,7 @@ struct CanvasScreen: View {
             SelectionDragOverlay(session: session)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-            DistortHandlesOverlay(session: session)
+            TransformOverlay(session: session)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
             if !session.interfaceHidden {
@@ -1147,10 +1175,23 @@ struct CanvasScreen: View {
                     TopBar(session: session)
                     ContextBar(session: session)
                 }
-                SideRail(session: session)
-                    .padding(session.preferences.leftHanded ? .trailing : .leading, 8)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: session.preferences.leftHanded ? .trailing : .leading)
+                // Pendant une sélection ou une transformation, la colonne de curseurs laisse la place, comme la barre du bas.
+                if session.tool != .select, session.transform == nil {
+                    SideRail(session: session)
+                        .padding(session.preferences.leftHanded ? .trailing : .leading, 8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: session.preferences.leftHanded ? .trailing : .leading)
+                }
+                Group {
+                    if session.transform != nil {
+                        TransformToolbar(session: session)
+                    } else if session.tool == .select {
+                        SelectionToolbar(session: session)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
+                .frame(maxHeight: .infinity, alignment: .bottom)
             }
             if session.showSizePreview {
                 BrushSizePreview(session: session)
@@ -1158,7 +1199,7 @@ struct CanvasScreen: View {
             }
             if let toast = session.toast {
                 ToastView(text: toast)
-                    .padding(.top, session.interfaceHidden ? 20 : 74)
+                    .padding(.top, session.interfaceHidden ? 0 : 56)
                     .allowsHitTesting(false)
             }
         }
