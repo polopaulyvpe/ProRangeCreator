@@ -76,3 +76,10 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath ../../build-tests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      # Le shader de la toile est compilé au lancement de l'app : on le compile ici pour voir une erreur avant l'iPad.
+      - name: Compiler le shader de la toile
+        run: |
+          awk '/static let source = """/{on=1; next} on && /^    """/{exit} on' \
+            Packages/ProRangeKit/Sources/PREngine/PanoramaShaders.swift > panorama.metal
+          wc -l panorama.metal
+          xcrun -sdk iphoneos metal -c panorama.metal -o panorama.air
