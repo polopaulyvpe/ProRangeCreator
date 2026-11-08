@@ -87,6 +87,10 @@ final class CanvasSession {
     var toast: String?
     /// Gestes de navigation en cours : la grille s'affiche pour qu'on voie la sphère tourner.
     var isNavigating = false
+    /// Change quand la vue a bougé : `view` est hors observation, les surcouches posées sur la toile (boîte de transformation,
+    /// tracé du lasso) lisent ce compteur pour la suivre.
+    var viewRevision = 0
+    @ObservationIgnored var lastDrawnView: ViewState?
     /// Change à chaque opération (vignettes des calques).
     var historyRevision = 0
     @ObservationIgnored var toastTask: Task<Void, Never>?
@@ -1001,6 +1005,10 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         uniforms.setSelection(visible: session.hasSelection && session.transform == nil, freeTransform: session.transform,
                               time: CACurrentMediaTime(), filter: session.transformFilter)
         if session.viewSize != view.bounds.size { session.viewSize = view.bounds.size }
+        if session.lastDrawnView != session.view {
+            session.lastDrawnView = session.view
+            session.viewRevision &+= 1
+        }
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
         try? renderer.encode(into: encoder, pixelFormat: view.colorPixelFormat, layers: layers, uniforms: uniforms)
         encoder.endEncoding()

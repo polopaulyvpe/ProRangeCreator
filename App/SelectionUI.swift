@@ -301,29 +301,28 @@ struct SelectionDragOverlay: View {
 
     var body: some View {
         if session.tool == .select, !session.lassoPoints.isEmpty || session.selectionDrag.count == 2 {
-            TimelineView(.animation) { _ in
-                GeometryReader { geo in
-                    let parameters = session.view.parameters(aspect: Double(geo.size.width / max(geo.size.height, 1)))
-                    let lasso = session.lassoPoints.compactMap { screenPoint(of: $0, parameters, geo.size) }
-                    let drag = session.selectionDrag.map { CGPoint(x: ($0.x + 1) / 2 * geo.size.width, y: (1 - $0.y) / 2 * geo.size.height) }
-                    let path = Path { path in
-                        if session.selectionKind == .freehand {
-                            if lasso.count >= 2 { path.addLines(lasso) }
-                        } else if drag.count == 2 {
-                            let rect = CGRect(x: min(drag[0].x, drag[1].x), y: min(drag[0].y, drag[1].y),
-                                              width: abs(drag[1].x - drag[0].x), height: abs(drag[1].y - drag[0].y))
-                            if session.selectionKind == .ellipse { path.addEllipse(in: rect) } else { path.addRect(rect) }
-                        }
+            GeometryReader { geo in
+                let _ = session.viewRevision
+                let parameters = session.view.parameters(aspect: Double(geo.size.width / max(geo.size.height, 1)))
+                let lasso = session.lassoPoints.compactMap { screenPoint(of: $0, parameters, geo.size) }
+                let drag = session.selectionDrag.map { CGPoint(x: ($0.x + 1) / 2 * geo.size.width, y: (1 - $0.y) / 2 * geo.size.height) }
+                let path = Path { path in
+                    if session.selectionKind == .freehand {
+                        if lasso.count >= 2 { path.addLines(lasso) }
+                    } else if drag.count == 2 {
+                        let rect = CGRect(x: min(drag[0].x, drag[1].x), y: min(drag[0].y, drag[1].y),
+                                          width: abs(drag[1].x - drag[0].x), height: abs(drag[1].y - drag[0].y))
+                        if session.selectionKind == .ellipse { path.addEllipse(in: rect) } else { path.addRect(rect) }
                     }
-                    ZStack {
-                        path.stroke(.white.opacity(0.7), lineWidth: 2.5)
-                        path.stroke(.black, style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
-                        if session.selectionKind == .freehand, let start = lasso.first {
-                            Circle().fill(Color(white: 0.78))
-                                .frame(width: 18, height: 18)
-                                .shadow(color: .black.opacity(0.25), radius: 1.5)
-                                .position(start)
-                        }
+                }
+                ZStack {
+                    path.stroke(.white.opacity(0.7), lineWidth: 2.5)
+                    path.stroke(.black, style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+                    if session.selectionKind == .freehand, let start = lasso.first {
+                        Circle().fill(Color(white: 0.78))
+                            .frame(width: 18, height: 18)
+                            .shadow(color: .black.opacity(0.25), radius: 1.5)
+                            .position(start)
                     }
                 }
             }

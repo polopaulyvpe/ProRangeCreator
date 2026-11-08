@@ -360,30 +360,29 @@ struct TransformOverlay: View {
 
     var body: some View {
         if session.transform != nil {
-            TimelineView(.animation) { _ in
-                GeometryReader { geo in
-                    let parameters = session.view.parameters(aspect: Double(geo.size.width / max(geo.size.height, 1)))
-                    if let g = session.transformGeometry(size: geo.size, parameters: parameters) {
-                        ZStack {
-                            let outline = Path { $0.addLines(g.outline) }
-                            outline.stroke(.white.opacity(0.6), lineWidth: 2.2)
-                            outline.stroke(.black, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            ForEach(0..<g.grid.count, id: \.self) { i in
-                                Path { $0.addLines(g.grid[i]) }.stroke(.black.opacity(0.7), lineWidth: 0.8)
-                            }
-                            if let stem = g.rotateStem {
-                                Path { $0.move(to: stem.0); $0.addLine(to: stem.1) }.stroke(Color.green, lineWidth: 1.5)
-                            }
-                            if let stem = g.boxStem {
-                                Path { $0.move(to: stem.0); $0.addLine(to: stem.1) }.stroke(Color.orange, lineWidth: 1.5)
-                            }
-                            ForEach(0..<g.handles.count, id: \.self) { i in
-                                handleView(g.handles[i].handle).position(g.handles[i].point)
-                            }
-                            if let size = session.transformSize, let anchor = g.handles.first?.point {
-                                SizeBadge(size: size)
-                                    .position(x: min(geo.size.width - 90, anchor.x + 260), y: max(60, anchor.y + 30))
-                            }
+            GeometryReader { geo in
+                let _ = session.viewRevision
+                let parameters = session.view.parameters(aspect: Double(geo.size.width / max(geo.size.height, 1)))
+                if let g = session.transformGeometry(size: geo.size, parameters: parameters) {
+                    ZStack {
+                        let outline = Path { $0.addLines(g.outline) }
+                        outline.stroke(.white.opacity(0.6), lineWidth: 2.2)
+                        outline.stroke(.black, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        ForEach(0..<g.grid.count, id: \.self) { i in
+                            Path { $0.addLines(g.grid[i]) }.stroke(.black.opacity(0.7), lineWidth: 0.8)
+                        }
+                        if let stem = g.rotateStem {
+                            Path { $0.move(to: stem.0); $0.addLine(to: stem.1) }.stroke(Color.green, lineWidth: 1.5)
+                        }
+                        if let stem = g.boxStem {
+                            Path { $0.move(to: stem.0); $0.addLine(to: stem.1) }.stroke(Color.orange, lineWidth: 1.5)
+                        }
+                        ForEach(0..<g.handles.count, id: \.self) { i in
+                            handleView(g.handles[i].handle).position(g.handles[i].point)
+                        }
+                        if let size = session.transformSize, let anchor = g.handles.first?.point {
+                            SizeBadge(size: size)
+                                .position(x: min(geo.size.width - 90, anchor.x + 260), y: max(60, anchor.y + 30))
                         }
                     }
                 }
