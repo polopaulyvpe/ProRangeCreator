@@ -89,6 +89,9 @@ extension CanvasSession {
         projectName = "Sans titre"
         projectURL = nil
         projectCreatedAt = Date()
+        bookmarks = []
+        perspective = PerspectiveSettings()
+        setPaintPlane(.none)
         hasUnsavedChanges = false
         fileMessage = nil
         // Nouveau projet : timelapse dans un dossier de travail neuf (celui du projet précédent reste à côté de lui).
@@ -108,7 +111,7 @@ extension CanvasSession {
             if projectURL != nil, url.deletingPathExtension().lastPathComponent != ProjectLibrary.sanitized(projectName) {
                 url = try library.rename(url, to: projectName)
             }
-            try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt)
+            try ProjectPackage.save(stack: stack, to: url, createdAt: projectCreatedAt, bookmarks: bookmarks, perspective: perspective)
             // Le timelapse vit à côté du paquet : déplacé au premier enregistrement, jamais recopié ensuite.
             try timelapseRecorder?.relocate(to: library.timelapseDirectory(for: url))
             // Vignette de la galerie, rendue à l'enregistrement seulement (pas après chaque opération).
@@ -133,6 +136,9 @@ extension CanvasSession {
             projectName = project.name
             projectURL = project.url
             projectCreatedAt = manifest.createdAt
+            bookmarks = manifest.bookmarks ?? []
+            perspective = manifest.perspective ?? PerspectiveSettings()
+            setPaintPlane(.none)
             hasUnsavedChanges = false
             // Le timelapse suit le projet (vide s'il n'en a pas).
             let sibling = Self.library.timelapseDirectory(for: project.url)

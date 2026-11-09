@@ -60,7 +60,8 @@ public struct ViewUniforms {
     }
 
     /// Montre le contenu tourné de `rotation` sans toucher aux pixels (nil = pas d'aperçu).
-    public mutating func setContentRotation(_ rotation: simd_double3x3?) {
+    /// `activeOnly` : seul le calque actif tourne (il faut qu'il soit composé à part : chemin rapide de `StackCanvas`).
+    public mutating func setContentRotation(_ rotation: simd_double3x3?, activeOnly: Bool = false) {
         guard let rotation else {
             contentRot0 = .zero
             return
@@ -68,7 +69,7 @@ public struct ViewUniforms {
         let inverse = rotation.transpose
         func column(_ c: SIMD3<Double>, _ w: Float) -> SIMD4<Float> { [Float(c.x), Float(c.y), Float(c.z), w] }
         contentRot0 = column(inverse.columns.0, 1)
-        contentRot1 = column(inverse.columns.1, 0)
+        contentRot1 = column(inverse.columns.1, activeOnly ? 1 : 0)
         contentRot2 = column(inverse.columns.2, 0)
     }
 

@@ -30,6 +30,7 @@ gh run view --log-failed
 | `PreferencesTests` | Aller-retour JSON ; champ inconnu, manquant ou illisible sans perte des autres ; courbe de pression (linéaire, ferme, douce, bornes) |
 | `BuiltInBrushesTests` | Catalogue complet (catégories, identifiants uniques), textures ni vides ni pleines et dans [0, 1] ; tampon soleil (cœur, halo) et silhouette de collines (pleine en bas, vide en haut) sur la sphère |
 | `ViewStateTests` | Direction regardée selon yaw et tangage ; bords du champ ; vue dépliée = équirectangulaire ; hors panorama ; extrémités du morphing ; dépliage et repliage centrés ; six faces ; bornes et sens des gestes |
+| `Drawing360Tests` | Trait calé sur le grand cercle du point de fuite, choix de l'axe selon le geste, départ sur le point de fuite ; repère rigide orthogonal, verticales fixes, points libres ; ellipse d'un tampon sur un plan contre la géométrie réelle du sol, ellipse rendue, ellipse très fine, ligne de fuite, espacement ; regards (plus court chemin, capture dans les trois vues, faces opposées) |
 | `PaintDynamicsTests` | Couleur par texel du masque (texel vierge exact, glacis plein recouvert selon la force du tampon) ; dynamique de couleur (neutre, couleur secondaire par la pression, assombrir, demi-tour de teinte) ; mélange humide (sans dilution rien ne se passe ; le tirage prend la couleur de la toile, toile vide sans effet, dilution et charge) ; azimut, rondeur, bavure, dégradé ; azimut interpolé par le plus court chemin |
 
 ## Suites actuelles (PREngine) — sautées sans GPU

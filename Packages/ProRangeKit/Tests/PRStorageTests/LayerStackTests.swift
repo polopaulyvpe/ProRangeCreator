@@ -277,6 +277,29 @@ final class LayerStackTests: XCTestCase {
         XCTAssertFalse(loaded.backgroundVisible)
     }
 
+    func testBookmarksAndPerspectiveSaved() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("prstack-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stack = makeStack()
+        let bookmarks = [ViewBookmark(name: "La porte", look: ViewLook(yaw: 1.2, pitch: -0.4, roll: 0.1, fov: 1.5))]
+        var perspective = PerspectiveSettings()
+        perspective.isEnabled = true
+        perspective.keepsVerticals = false
+        perspective.points = PerspectiveSettings.boxPoints(yaw: 0.7)
+
+        let url = directory.appendingPathComponent("P.prrange")
+        try ProjectPackage.save(stack: stack, to: url, bookmarks: bookmarks, perspective: perspective)
+        let manifest = try ProjectPackage.loadStack(from: url).manifest
+        XCTAssertEqual(manifest.bookmarks, bookmarks)
+        XCTAssertEqual(manifest.perspective, perspective)
+
+        let older = directory.appendingPathComponent("Ancien.prrange")
+        try ProjectPackage.save(stack: stack, to: older)
+        let plain = try ProjectPackage.loadStack(from: older).manifest
+        XCTAssertNil(plain.bookmarks, "projet sans regards")
+        XCTAssertNil(plain.perspective)
+    }
+
     func testSelectContentAndReferenceFill() {
         let stack = makeStack()
         let painted = stack.items[0]

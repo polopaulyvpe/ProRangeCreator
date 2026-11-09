@@ -166,6 +166,27 @@ final class CanvasSession {
     @ObservationIgnored var smudgePrevious: [Vec3] = []
     @ObservationIgnored var lastAspect = 1.5
 
+    // Dessin 360 (voir Drawing360UI.swift)
+    var show360Panel = false
+    var perspective = PerspectiveSettings()
+    /// Poignées des points de fuite affichées sur la toile.
+    var perspectiveEditing = false
+    var perspectiveSelection: UUID?
+    var paintPlaneKind: PaintPlaneKind = .none
+    var paintPlane: PaintPlane?
+    var paintPlaneGrid = true
+    var bookmarks: [ViewBookmark] = []
+    /// La rotation (panneau partagé avec celle de la sphère) ne concerne que le calque actif.
+    var rotationLayerOnly = false
+    /// Grand cercle du trait en cours ; choisi après quelques points de mouvement (`strokeLockPending`).
+    @ObservationIgnored var strokeLock: GreatCircleLock?
+    @ObservationIgnored var strokeLockPending = false
+    @ObservationIgnored var strokeLockStart = Vec3(0, 0, -1)
+    /// Facteur d'espacement des tampons sur le plan, recalculé à chaque point du trait.
+    @ObservationIgnored var planeSpacingScale = 1.0
+    @ObservationIgnored var lookAnimation: (from: ViewLook, to: ViewLook, start: CFTimeInterval)?
+    @ObservationIgnored var bookmarkIndex = -1
+
     // Sélection (voir SelectionUI.swift)
     @ObservationIgnored var selection: SelectionMask?
     var hasSelection = false
@@ -329,6 +350,14 @@ final class CanvasSession {
 
     /// Avance les animations de dépliage et de roulis (appelé à chaque image).
     func advance(now: CFTimeInterval) {
+        if let anim = lookAnimation {
+            let t = min(1, (now - anim.start) / 0.45)
+            view.sphereLook = ViewLook.interpolate(anim.from, anim.to, t * t * (3 - 2 * t))
+            if t >= 1 {
+                lookAnimation = nil
+                refreshViewInfo()
+            }
+        }
         if let anim = rollAnimation {
             let t = min(1, (now - anim.start) / 0.2)
             let eased = t * t * (3 - 2 * t)
@@ -364,6 +393,39 @@ final class CanvasSession {
         morphAnimation = (view.morph, target, CACurrentMediaTime())
     }
 
+    // MARK: - Regards
+
+    /// Rejoint un regard enregistré, en vue sphère, par une courte animation.
+    func go(to look: ViewLook) {
+        morphAnimation = nil
+        rollAnimation = nil
+        if mode != .sphere {
+            if mode == .unfolded { view.prepareFold() }
+            view.mode = .sphere
+            view.morph = 0
+            mode = .sphere
+        }
+        var target = look
+        if horizonLocked { target.roll = 0 }
+        lookAnimation = (view.sphereLook, target, CACurrentMediaTime())
+    }
+
+    /// Regarde derrière soi, dans chacune des trois vues.
+    func turnAround() {
+        switch mode {
+        case .sphere:
+            morphAnimation = nil
+            var target = view.sphereLook
+            target.yaw += .pi
+            lookAnimation = (view.sphereLook, target, CACurrentMediaTime())
+        case .unfolded:
+            let x = view.unfoldedCenter.x + 0.5
+            view.unfoldedCenter.x = x - floor(x)
+        case .flat:
+            showFace(view.face.opposite)
+        }
+    }
+
     func refreshViewInfo() {
         fovDegrees = (mode == .flat ? view.flatFov : view.fov) * 180 / .pi
     }
@@ -390,7 +452,10 @@ final class CanvasSession {
         stabilizer = stabilizesStroke && settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer) : nil
         let (ndc, pressure) = stabilize(ndc, mapped)
         lastAspect = aspect
-        guard let canvas, let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        guard let canvas, let raw = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        strokeLock = nil
+        strokeLockPending = false
+        let d = activePlane?.clamped(raw) ?? raw
         lastDirection = d
         if transform != nil {
             transformBegan(ndc: ndc)
@@ -416,6 +481,10 @@ final class CanvasSession {
         default:
             break
         }
+        // Perspective : le point de fuite est choisi quand le geste a pris sa direction.
+        strokeLockPending = perspective.isEnabled && !perspective.points.isEmpty
+        strokeLockStart = d
+        planeSpacingScale = activePlane?.spacingScale(at: d, moving: nil) ?? 1
         canvas.forceCPU = tool.needsCPU
         // Pinceau et gomme : trait à masque (glacis, flux, pinceau double).
         let masked = tool == .brush || tool == .eraser
@@ -469,13 +538,24 @@ final class CanvasSession {
             selectionMoved(ndc: ndc)
             return
         }
-        guard let d = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        guard let raw = view.direction(atNDC: ndc, aspect: aspect) else { return }
+        if strokeLockPending {
+            // Environ 6 points d'écran de mouvement : assez pour lire la direction du geste sans retard visible.
+            let threshold = 6 * view.parameters(aspect: aspect).pixelAngle(viewportHeight: Double(viewSize.height))
+            guard Sphere.angle(strokeLockStart, raw) >= threshold else { return }
+            strokeLockPending = false
+            strokeLock = perspective.lock(from: strokeLockStart, through: raw)
+        }
+        let d = assisted(raw)
         // Vitesse du trait (Dynamique > Vitesse), lissée ; les touches regroupées d'une même image ne comptent pas.
         let now = CACurrentMediaTime()
         if let last = lastDirection, now - lastMoveTime > 0.004 {
             let instant = Sphere.angle(last, d) / (now - lastMoveTime)
             strokeSpeed = strokeSpeed * 0.7 + instant * 0.3
             lastMoveTime = now
+        }
+        if let plane = activePlane, let last = lastDirection, Sphere.angle(last, d) > 1e-7 {
+            planeSpacingScale = plane.spacingScale(at: d, moving: d - last)
         }
         lastDirection = d
         guard let canvas, canvas.isStroking, !quickShapeApplied else { return }
@@ -499,8 +579,13 @@ final class CanvasSession {
     private func advancePaths(_ sample: StrokeSample?, finishing: Bool) -> [SphericalDab] {
         let brush = settings
         var path = brushPath
+        // Sur un plan, les tampons rétrécissent au loin : l'espacement les suit, jusqu'au quart de texel.
+        let planeScale = planeSpacingScale
+        let onPlane = activePlane != nil
+        let quarterTexel = 0.25 * Double.pi / Double(stack.height)
+        func adjusted(_ spacing: Double) -> Double { onPlane ? max(spacing * planeScale, quarterTexel) : spacing }
         let primarySpacing: (Double) -> Double = { p in
-            brush.spacing(radius: brush.radius(pressure: p), random: self.strokeRandom.next(), speed: self.strokeSpeed)
+            adjusted(brush.spacing(radius: brush.radius(pressure: p), random: self.strokeRandom.next(), speed: self.strokeSpeed))
         }
         let samples = sample.map { path.add($0, spacing: primarySpacing) } ?? (finishing ? path.finish(spacing: primarySpacing) : [])
         brushPath = path
@@ -508,7 +593,7 @@ final class CanvasSession {
         if let secondary = brush.resolvedSecondary {
             var second = secondaryPath
             let secondarySpacing: (Double) -> Double = { p in
-                secondary.spacing(radius: secondary.radius(pressure: p), random: self.secondaryRandom.next(), speed: self.strokeSpeed)
+                adjusted(secondary.spacing(radius: secondary.radius(pressure: p), random: self.secondaryRandom.next(), speed: self.strokeSpeed))
             }
             let secondSamples = sample.map { second.add($0, spacing: secondarySpacing) }
                 ?? (finishing ? second.finish(spacing: secondarySpacing) : [])
@@ -527,6 +612,7 @@ final class CanvasSession {
     /// Dabs aux points du trait (pression et inclinaison propres à chacun) et leurs copies par symétrie.
     func symmetricDabs(_ samples: [StrokeSample]) -> [SphericalDab] {
         var dabs: [SphericalDab] = []
+        let planeNormals = activePlane.map { symmetry.images(of: $0.normal) }
         for sample in samples {
             let center = sample.point
             if let previous = previousDabCenter { strokeDistance += Sphere.angle(previous, center) }
@@ -542,6 +628,7 @@ final class CanvasSession {
                     let angle = i < previous.count ? BrushSettings.strokeAngle(from: previous[i], to: image) : 0
                     context.azimuth = azimuths[i]
                     var made = dab(at: image, pressure: sample.pressure, strokeAngle: angle, random: random, context: context)
+                    if let planeNormals, i < planeNormals.count { PaintPlane.foreshorten(&made, normal: planeNormals[i]) }
                     if wetSampler != nil { wetMix(&made, image: i, random: random) }
                     strokeRecords.append((made, strokeDistance))
                     dabs.append(made)
@@ -560,6 +647,7 @@ final class CanvasSession {
     func secondaryDabs(_ samples: [StrokeSample]) -> [SphericalDab] {
         guard let secondary = settings.resolvedSecondary, !samples.isEmpty else { return [] }
         var dabs: [SphericalDab] = []
+        let planeNormals = activePlane.map { symmetry.images(of: $0.normal) }
         let mode: DabMode = tool == .brush ? .paint : .erase
         for sample in samples {
             let center = sample.point
@@ -576,6 +664,7 @@ final class CanvasSession {
                     var dab = secondary.dab(at: image, pressure: sample.pressure, color: linearColor, mode: mode, strokeAngle: angle,
                                             random: random, context: context)
                     dab.secondary = true
+                    if let planeNormals, i < planeNormals.count { PaintPlane.foreshorten(&dab, normal: planeNormals[i]) }
                     strokeRecords.append((dab, strokeDistance))
                     dabs.append(dab)
                 }
@@ -636,7 +725,7 @@ final class CanvasSession {
     func strokePredicted(_ points: [(ndc: SIMD2<Double>, pressure: Double, tilt: Double, azimuth: SIMD2<Double>?)], aspect: Double) {
         guard let canvas, canvas.isStroking else { return }
         guard canvas.usesFastPath, tool == .brush || tool == .eraser, stabilizer == nil, !quickShapeApplied,
-              transform == nil, tool != .select, !points.isEmpty else {
+              transform == nil, tool != .select, !points.isEmpty, !strokeLockPending else {
             canvas.setPrediction([])
             return
         }
@@ -644,7 +733,8 @@ final class CanvasSession {
                      strokeDistance, strokeRecords.count, wetMixers)
         var dabs: [SphericalDab] = []
         for point in points {
-            guard let d = view.direction(atNDC: point.ndc, aspect: aspect) else { continue }
+            guard let raw = view.direction(atNDC: point.ndc, aspect: aspect) else { continue }
+            let d = assisted(raw)
             let sample = StrokeSample(point: d, pressure: preferences.mappedPressure(point.pressure), tilt: point.tilt,
                                       azimuth: azimuthAngle(at: d, toward: point.azimuth, aspect: aspect) ?? strokeAzimuth)
             dabs += advancePaths(sample, finishing: false)
@@ -709,6 +799,15 @@ final class CanvasSession {
         }
         wetSampler = nil
         refreshHistory()
+    }
+
+    /// Plan appliqué aux tampons de l'outil courant (le pinceau et la gomme seulement).
+    var activePlane: PaintPlane? { tool == .brush || tool == .eraser ? paintPlane : nil }
+
+    /// Point du trait après la perspective (grand cercle choisi) et le plan (côté visible de sa ligne de fuite).
+    private func assisted(_ d: Vec3) -> Vec3 {
+        let locked = strokeLock?.apply(d) ?? d
+        return activePlane?.clamped(locked) ?? locked
     }
 
     /// Second doigt posé ou pipette : le trait commencé disparaît sans laisser de trace.
@@ -999,7 +1098,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
         var uniforms = ViewUniforms(parameters, viewportHeight: Int(size.height), textureHeight: layers.below.height,
                                     exposure: session.exposure, toneMapping: session.toneMapping)
         canvas.configure(&uniforms)
-        uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil)
+        uniforms.setContentRotation(session.showRotation ? session.previewRotation : nil, activeOnly: session.rotationLayerOnly)
         uniforms.setGuides(enabled: session.guidesEnabled || session.isNavigating, spacingDegrees: session.guideSpacing)
         // Pendant une transformation, pas de hachures : seule la boîte est montrée.
         uniforms.setSelection(visible: session.hasSelection && session.transform == nil, freeTransform: session.transform,
@@ -1050,6 +1149,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     /// Grille visible pendant les gestes de navigation : sur une toile vide, c'est elle qui montre que la vue tourne.
     private func trackNavigation(_ gesture: UIGestureRecognizer) {
+        if gesture.state == .began { session.lookAnimation = nil } // la main reprend la vue
         switch gesture.state {
         case .began, .changed: session.isNavigating = true
         default: session.isNavigating = false
@@ -1191,6 +1291,15 @@ struct CanvasScreen: View {
             TransformOverlay(session: session)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
+            if session.shows360Grid {
+                Drawing360Grid(session: session)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+            if session.perspectiveEditing {
+                VanishingHandles(session: session)
+                    .ignoresSafeArea()
+            }
             if !session.interfaceHidden {
                 VStack(spacing: 10) {
                     TopBar(session: session)
@@ -1239,7 +1348,10 @@ struct CanvasScreen: View {
         .sheet(isPresented: $session.showTextSheet) { TextSheet(session: session) }
         .sheet(isPresented: $session.showBrushLibrary) { BrushLibrarySheet(session: session) }
         .fullScreenCover(isPresented: $session.showBrushStudio) { BrushStudioView(session: session) }
-        .sheet(isPresented: $session.showRotation) {
+        .sheet(isPresented: $session.showRotation, onDismiss: {
+            session.rotationLayerOnly = false
+            session.sphereRotation = .zero
+        }) {
             SphereRotationPanel(session: session)
                 .padding(24)
                 .presentationDetents([.medium])

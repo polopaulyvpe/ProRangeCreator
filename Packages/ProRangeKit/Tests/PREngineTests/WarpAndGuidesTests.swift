@@ -87,4 +87,42 @@ final class WarpAndGuidesTests: XCTestCase {
         let x = 40
         XCTAssertEqual(Float(preview[(16 * 64 + x) * 4]), Float(plain[(16 * 64 + (x - 16)) * 4]), accuracy: 0.02)
     }
+
+    /// Aperçu « tourner ce calque » : le calque actif tourne, le dessous reste en place.
+    func testRotationPreviewOfActiveLayerOnly() throws {
+        let device = try device()
+        let renderer = try PanoramaRenderer(device: device)
+        func texture(_ value: (Int) -> SIMD4<Float>) throws -> any MTLTexture {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 64, height: 32, mipmapped: false)
+            desc.usage = [.shaderRead]
+            desc.storageMode = .shared
+            let texture = try XCTUnwrap(device.makeTexture(descriptor: desc))
+            var pixels = [Float16](repeating: 0, count: 64 * 32 * 4)
+            for y in 0..<32 {
+                for x in 0..<64 {
+                    let v = value(x)
+                    for k in 0..<4 { pixels[(y * 64 + x) * 4 + k] = Float16(v[k]) }
+                }
+            }
+            pixels.withUnsafeBytes { texture.replace(region: MTLRegionMake2D(0, 0, 64, 32), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: 64 * 8) }
+            return texture
+        }
+        // Dessous : dégradé rouge opaque. Actif : bande verte opaque sur les colonnes 20 à 23, transparent ailleurs.
+        let below = try texture { x in [Float(x) / 64, 0, 0, 1] }
+        let active = try texture { x in (20..<24).contains(x) ? [0, 1, 0, 1] : .zero }
+        let layers = PanoramaLayers(below: below, active: active)
+
+        var view = ViewState()
+        view.mode = .unfolded
+        view.morph = 1
+        var uniforms = ViewUniforms(view.parameters(aspect: 2), viewportHeight: 32, textureHeight: 32)
+        uniforms.setLayers(activeOpacity: 1, mode: .normal, aboveEnabled: false, space: .linear)
+        uniforms.setContentRotation(ViewState.rotation(yaw: .pi / 2, pitch: 0, roll: 0), activeOnly: true)
+        let out = try renderer.renderOffscreen(layers: layers, width: 64, height: 32, uniforms: uniforms, filtering: .nearest)
+
+        XCTAssertEqual(Float(out[(16 * 64 + 37) * 4 + 1]), 1, accuracy: 0.02, "la bande a tourné d'un quart de largeur")
+        XCTAssertEqual(Float(out[(16 * 64 + 21) * 4 + 1]), 0, accuracy: 0.02, "elle a quitté sa place")
+        XCTAssertEqual(Float(out[(16 * 64 + 21) * 4]), 21.0 / 64, accuracy: 0.02, "le dessous n'a pas bougé")
+        XCTAssertEqual(Float(out[(16 * 64 + 50) * 4]), 50.0 / 64, accuracy: 0.02)
+    }
 }

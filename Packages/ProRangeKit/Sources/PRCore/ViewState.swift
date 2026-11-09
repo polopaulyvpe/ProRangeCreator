@@ -49,6 +49,18 @@ public enum CubeFace: String, CaseIterable, Sendable {
         default: 0
         }
     }
+
+    /// Face opposée (demi-tour).
+    public var opposite: CubeFace {
+        switch self {
+        case .front: .back
+        case .back: .front
+        case .left: .right
+        case .right: .left
+        case .up: .down
+        case .down: .up
+        }
+    }
 }
 
 /// Courbe d'affichage des valeurs linéaires (D12 : écrêtage par défaut).
@@ -245,6 +257,32 @@ public struct ViewState: Sendable, Equatable {
         self.face = face
         flatShift = .zero
         roll = 0
+    }
+
+    // MARK: - Regards
+
+    /// Regard de la vue sphère.
+    public var sphereLook: ViewLook {
+        get { ViewLook(yaw: yaw, pitch: pitch, roll: roll, fov: fov) }
+        set {
+            yaw = newValue.yaw
+            pitch = newValue.pitch
+            roll = newValue.roll
+            fov = newValue.fov
+        }
+    }
+
+    /// Regard équivalent à ce que montre la vue courante, quel que soit son mode.
+    public var capturedLook: ViewLook {
+        switch mode {
+        case .sphere:
+            return sphereLook
+        case .unfolded:
+            let centerPitch = min(Self.maxPitch, max(-Self.maxPitch, (0.5 - unfoldedCenter.y) * .pi))
+            return ViewLook(yaw: (unfoldedCenter.x - 0.5) * 2 * .pi, pitch: centerPitch, roll: 0, fov: fov)
+        case .flat:
+            return ViewLook(yaw: face.yaw, pitch: min(Self.maxPitch, max(-Self.maxPitch, face.pitch)), roll: roll, fov: flatFov)
+        }
     }
 
     private static func clamp(_ v: Double, _ range: ClosedRange<Double>) -> Double {

@@ -19,7 +19,18 @@ final class BrushTipGPUTests: XCTestCase {
         let grain = BrushTexture(name: "damier", size: 32, values: (0..<1024).map { i -> Float in
             (i % 32 / 4 + i / 32 / 4) % 2 == 0 ? 0.9 : 0.2
         })
+        // Ellipses (peinture sur un plan) : rond dur, rond doux, forme écrasée, très près du bord de la toile.
+        var ellipse = SphericalDab(center: Equirect.direction(latitude: -0.9, longitude: -2.4), radius: 0.3, hardness: 1, color: [1, 0.6, 0.2, 1])
+        ellipse.squash = DabSquash(ratio: 0.3, angle: 0.5)
+        var softEllipse = SphericalDab(center: Equirect.direction(latitude: 0.9, longitude: -0.4), radius: 0.28, hardness: 0.3, color: [0.2, 0.8, 0.5, 0.9])
+        softEllipse.squash = DabSquash(ratio: 0.55, angle: -1.1)
+        var shapedEllipse = SphericalDab(center: Equirect.direction(latitude: -0.1, longitude: -0.7), radius: 0.25, hardness: 1, color: [0.8, 0.8, 0.9, 1],
+                                         tip: DabTip(shape: shape, rotation: 0.4))
+        shapedEllipse.squash = DabSquash(ratio: 0.4, angle: 2)
+        var thinEllipse = SphericalDab(center: [0, -1, 0], radius: 0.2, hardness: 1, color: [0.9, 0.1, 0.8, 1])
+        thinEllipse.squash = DabSquash(ratio: 0.02, angle: 1)
         let dabs = [
+            ellipse, softEllipse, shapedEllipse, thinEllipse,
             SphericalDab(center: Equirect.direction(latitude: 0.1, longitude: 0.3), radius: 0.3, hardness: 1, color: [0.9, 0.2, 0.1, 1],
                          tip: DabTip(shape: shape, rotation: 0.7)),
             SphericalDab(center: Equirect.direction(latitude: -0.2, longitude: .pi), radius: 0.25, hardness: 0.6, color: [0.1, 0.4, 0.9, 0.8],

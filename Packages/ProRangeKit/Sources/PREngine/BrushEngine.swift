@@ -14,7 +14,7 @@ public final class BrushEngine {
         case noFunction
     }
 
-    /// Paramètres d'un dab pour le kernel (même disposition qu'en MSL : neuf vecteurs de 16 octets).
+    /// Paramètres d'un dab pour le kernel (même disposition qu'en MSL : dix vecteurs de 16 octets).
     struct GPUDab {
         var center: SIMD4<Float>   // direction, rayon
         var params: SIMD4<Float>   // dureté, taille angulaire d'un texel, cos(portée), mode (0 peindre, 1 effacer)
@@ -24,6 +24,7 @@ public final class BrushEngine {
         var grain: SIMD4<Float>    // 1 / taille du grain, profondeur, miroir de la forme, rondeur
         var grain2: SIMD4<Float>   // décalage du grain mobile (x, y), cos et sin de sa rotation
         var extra: SIMD4<Float>    // fusion du grain (index de `DualBlendMode`), largeur de la forme, niveaux de réduction de la forme et du grain
+        var squash: SIMD4<Float>   // cos et sin de l'axe écrasé, rapport (1 = rond), inutilisé
         var region: SIMD4<Int32>   // x0, y0, largeur, hauteur (en texels)
     }
 
@@ -153,6 +154,8 @@ public final class BrushEngine {
                          grain: grainVector, grain2: grain2Vector,
                          extra: SIMD4<Float>(Float(tip?.grainBlend.index ?? 0), Float(max(0.05, tip?.width ?? 1)),
                                              evaluator.shapeLOD, evaluator.grainLOD),
+                         squash: SIMD4<Float>(Float(dab.squash?.cosine ?? 1), Float(dab.squash?.sine ?? 0),
+                                              Float(dab.squash?.ratio ?? 1), 0),
                          region: .zero)
         var regions: [SIMD4<Int32>] = []
         var tiles: [TileCoord] = []
@@ -352,6 +355,7 @@ public final class BrushEngine {
         float4 grain;
         float4 grain2;
         float4 extra;
+        float4 squash;
         int4 region;
     };
 
@@ -422,13 +426,27 @@ public final class BrushEngine {
         float distance = atan2(sinA, cosA);
         // Coordonnées du plan tangent (azimutal équidistant) : pour la forme et pour le grain mobile.
         float px = 0.0, py = 0.0;
-        if (dab.tip.z > 0.5 || dab.tip.w > 1.5) {
+        float pixel = dab.params.y;
+        bool squashed = dab.squash.z < 1.0;
+        if (dab.tip.z > 0.5 || dab.tip.w > 1.5 || squashed) {
             float3 east = cross(c, float3(0.0, 1.0, 0.0));
             east = length(east) < 1e-6 ? float3(1.0, 0.0, 0.0) : normalize(east);
             float3 north = cross(east, c);
             float k = sinA > 1e-7 ? distance / sinA : 1.0;
             px = dot(tangent, east) * k;
             py = dot(tangent, north) * k;
+        }
+        if (squashed) {
+            // Ellipse (peinture sur un plan) : le point est ramené dans le repère du disque (voir `DabSquash.unsquash`).
+            float along = (px * dab.squash.x + py * dab.squash.y) / dab.squash.z;
+            float across = -px * dab.squash.y + py * dab.squash.x;
+            distance = sqrt(along * along + across * across);
+            if (distance > 1e-7) {
+                float slope = along / dab.squash.z;
+                pixel *= sqrt(slope * slope + across * across) / distance;
+            }
+            px = along * dab.squash.x - across * dab.squash.y;
+            py = along * dab.squash.y + across * dab.squash.x;
         }
         if (dab.tip.z > 0.5) {
             // Forme : tournée, retournée, écrasée selon la rondeur, ramenée au carré [-1, 1]².
@@ -438,7 +456,7 @@ public final class BrushEngine {
             if (abs(qx) > 1.0 || abs(qy) > 1.0) { return false; }
             a = shape.sample(clampSampler, float2((qx + 1.0) * 0.5, (1.0 - qy) * 0.5), level(dab.extra.z)).r;
         } else {
-            a = coverage(distance, dab.center.w, dab.params.x, dab.params.y);
+            a = coverage(distance, dab.center.w, dab.params.x, pixel);
         }
         if (a <= 0.0) { return false; }
         if (dab.tip.w > 1.5) {

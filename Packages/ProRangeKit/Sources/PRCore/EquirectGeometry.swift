@@ -74,14 +74,20 @@ public struct DabEvaluator: Sendable {
     @inline(__always)
     public func coverage(at d: Vec3) -> Float {
         if simd_dot(d, frame.center) < cosReach { return 0 }
-        let p = frame.project(d)
+        var p = frame.project(d)
+        var pixel = pixelAngle
+        if let squash = dab.squash {
+            let local = squash.unsquash(p)
+            p = local.point
+            pixel *= local.pixelScale
+        }
         guard let tip = dab.tip else {
             return Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
-                                                      hardness: dab.hardness, pixelSize: pixelAngle))
+                                                      hardness: dab.hardness, pixelSize: pixel))
         }
         let base = tip.shapeValue(at: p, radius: dab.radius, lod: shapeLOD)
             ?? Float(SphericalRasterizer.coverage(distance: simd_length(p), radius: dab.radius,
-                                                  hardness: dab.hardness, pixelSize: pixelAngle))
+                                                  hardness: dab.hardness, pixelSize: pixel))
         guard base > 0, tip.grain != nil else { return base }
         return tip.applyGrain(base, tip.grainValue(at: d, local: p, lod: grainLOD))
     }

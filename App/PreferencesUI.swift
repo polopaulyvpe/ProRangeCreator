@@ -9,6 +9,8 @@ extension CanvasSession {
         case .redo: redo()
         case .toggleInterface: interfaceHidden.toggle()
         case .toggleUnfold: toggleUnfold()
+        case .turnAround: turnAround()
+        case .nextBookmark: goToNextBookmark()
         case .none: break
         }
     }

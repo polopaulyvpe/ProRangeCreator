@@ -20,6 +20,9 @@ public enum ProjectPackage {
         /// Couleur d'arrière-plan (RGB linéaire) et sa visibilité. Absentes : fond blanc visible.
         public var background: [Float]? = nil
         public var backgroundVisible: Bool? = nil
+        /// Regards enregistrés et perspective 360. Absents dans les projets plus anciens.
+        public var bookmarks: [ViewBookmark]? = nil
+        public var perspective: PerspectiveSettings? = nil
     }
 
     public struct LayerRecord: Codable, Sendable, Equatable {
@@ -50,7 +53,8 @@ public enum ProjectPackage {
 
     /// Enregistre les calques. Écrit dans un dossier temporaire puis remplace l'ancien paquet (le journal est conservé).
     public static func save(layers: [TiledLayer], to url: URL, createdAt: Date = Date(), items: [ItemRecord]? = nil,
-                            background: SIMD3<Float>? = nil, backgroundVisible: Bool? = nil) throws {
+                            background: SIMD3<Float>? = nil, backgroundVisible: Bool? = nil,
+                            bookmarks: [ViewBookmark]? = nil, perspective: PerspectiveSettings? = nil) throws {
         guard let first = layers.first else { throw Failure.noLayers }
         let fm = FileManager.default
         let staging = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).saving")
@@ -77,7 +81,8 @@ public enum ProjectPackage {
             formatVersion: formatVersion, width: first.width, height: first.height, tileSize: TileSize.side,
             colorSpace: "linear-display-p3-premultiplied", createdAt: createdAt, modifiedAt: Date(),
             layers: layers.map { LayerRecord(id: $0.id, name: $0.name, format: $0.format, opacity: $0.opacity, isVisible: $0.isVisible) },
-            items: items, background: background.map { [$0.x, $0.y, $0.z] }, backgroundVisible: backgroundVisible)
+            items: items, background: background.map { [$0.x, $0.y, $0.z] }, backgroundVisible: backgroundVisible,
+            bookmarks: bookmarks, perspective: perspective)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -152,7 +157,8 @@ public enum ProjectPackage {
     }
 
     /// Enregistre une pile complète (calques, masques, groupes, propriétés).
-    public static func save(stack: LayerStack, to url: URL, createdAt: Date = Date()) throws {
+    public static func save(stack: LayerStack, to url: URL, createdAt: Date = Date(), bookmarks: [ViewBookmark]? = nil,
+                            perspective: PerspectiveSettings? = nil) throws {
         let records = stack.items.map { item in
             ItemRecord(id: item.id, isGroup: item.isGroup, name: item.name, opacity: item.opacity, isVisible: item.isVisible,
                        blendMode: item.blendMode, alphaLock: item.alphaLock, isClipped: item.isClipped, parent: item.parent,
@@ -160,7 +166,8 @@ public enum ProjectPackage {
                        isCollapsed: item.isCollapsed)
         }
         try save(layers: stack.allTiledLayers, to: url, createdAt: createdAt, items: records,
-                 background: stack.background, backgroundVisible: stack.backgroundVisible)
+                 background: stack.background, backgroundVisible: stack.backgroundVisible,
+                 bookmarks: bookmarks, perspective: perspective)
     }
 
     /// Ouvre une pile (v2), ou construit une pile plate à partir des calques d'un projet v1.

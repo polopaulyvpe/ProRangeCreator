@@ -85,6 +85,10 @@ struct TopBar: View {
             BarCircleButton(symbol: "location.north.fill", active: session.transform != nil) {
                 if session.transform == nil { session.startTransform() } else { session.applyTransform() }
             }
+            BarCircleButton(symbol: "cube.transparent", active: session.perspective.isEnabled || session.paintPlane != nil) {
+                session.show360Panel = true
+            }
+            .popover(isPresented: $session.show360Panel, arrowEdge: .top) { Drawing360Panel(session: session) }
 
             Spacer(minLength: 8)
             ViewModeControl(session: session)
@@ -273,6 +277,8 @@ struct ContextBar: View {
         Group {
             if session.transform != nil {
                 EmptyView()
+            } else if session.perspectiveEditing {
+                PerspectiveEditBar(session: session)
             } else if session.activeFilter != nil {
                 FilterPanel(session: session)
             } else if session.tool != .brush, session.tool != .eraser, session.tool != .select {

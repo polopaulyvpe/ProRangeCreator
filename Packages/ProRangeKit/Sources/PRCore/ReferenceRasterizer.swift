@@ -64,6 +64,8 @@ public struct SphericalDab: Sendable {
     public var flow: Float = 1
     /// Tampon du pinceau secondaire d'un pinceau double (canaux z, w du masque du trait).
     public var secondary = false
+    /// Écrasement en ellipse (peinture sur un plan) ; nil = pas d'écrasement. `radius` reste le grand demi-axe.
+    public var squash: DabSquash?
 
     public init(center: Vec3, radius: Double, hardness: Double, color: SIMD4<Float>, mode: DabMode = .paint, tip: DabTip? = nil) {
         self.center = center
@@ -83,11 +85,18 @@ extension SphericalDab {
     /// est agrandi à `minimumRadiusTexels` et son opacité réduite d'autant (même quantité de peinture, trait continu).
     public func resolved(pixelAngle: Double) -> SphericalDab {
         let minimum = Self.minimumRadiusTexels * pixelAngle
-        guard radius < minimum else { return self }
         var dab = self
-        let k = radius / minimum
-        dab.radius = minimum
-        dab.color.w *= Float(k * k)
+        if radius < minimum {
+            let k = radius / minimum
+            dab.radius = minimum
+            dab.color.w *= Float(k * k)
+        }
+        // Ellipse trop fine : même règle pour le petit axe (l'aire, donc la quantité de peinture, est conservée).
+        if let squash = dab.squash, squash.ratio * dab.radius < minimum {
+            let wanted = min(1, minimum / dab.radius)
+            dab.color.w *= Float(squash.ratio / wanted)
+            dab.squash = DabSquash(ratio: wanted, angle: squash.angle)
+        }
         return dab
     }
 }

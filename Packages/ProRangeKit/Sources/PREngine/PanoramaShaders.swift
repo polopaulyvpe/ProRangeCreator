@@ -19,7 +19,7 @@ enum PanoramaShaders {
         float4 paper;       // fond de la toile, sous le calque (blanc)
         float4 layer;       // calque actif : opacité (0 = absent ou masqué), mode, dessus présent, espace (0 perceptuel, 1 linéaire)
         float4 contentRot0; // aperçu de rotation de la sphère : inverse, colonne 0 ; w = 1 si actif
-        float4 contentRot1;
+        float4 contentRot1; // w = 1 : seul le calque actif tourne
         float4 contentRot2;
         float4 guides;      // actifs, espacement (degrés), opacité, inutilisé
         float4 selection;   // sélection affichée, aperçu de transformation actif, inutilisé, temps (hachures)
@@ -332,10 +332,13 @@ enum PanoramaShaders {
             float horizon = clamp(1.0 - abs(latDeg) * PI / 180.0 / (2.0 * width), 0.0, 1.0);
             guide = max(guide, horizon);
         }
+        // Coordonnées de lecture du calque actif : l'aperçu peut ne tourner que lui (contentRot1.w = 1).
+        float2 activeUV = uv;
         if (u.contentRot0.w > 0.5) {
             float3 d = directionFromUV(uv);
             d = u.contentRot0.xyz * d.x + u.contentRot1.xyz * d.y + u.contentRot2.xyz * d.z;
-            uv = uvFromDirection(d);
+            activeUV = uvFromDirection(d);
+            if (u.contentRot1.w < 0.5) { uv = activeUV; }
         }
         // Sélection, et aperçu de transformation : la direction vue est ramenée à sa source par la transformation inverse
         // (même calcul que PRCore.FreeTransform.Resolved.inverse).
@@ -356,7 +359,7 @@ enum PanoramaShaders {
         bool perceptual = u.layer.w < 0.5;
         // Dessous (papier et calques inférieurs déjà composés), puis calque actif avec son mode, puis dessus (tout en Normal).
         float4 c = pano.sample(s, uv, level(lod));
-        if (u.layer.x > 0.0) { c = compositeLayer(c, active.sample(s, uv, level(lod)), int(u.layer.y), u.layer.x, perceptual); }
+        if (u.layer.x > 0.0) { c = compositeLayer(c, active.sample(s, activeUV, level(lod)), int(u.layer.y), u.layer.x, perceptual); }
         if (u.layer.z > 0.5) { c = compositeLayer(c, above.sample(s, uv, level(lod)), 0, 1.0, perceptual); }
         // Arrière-plan : sa couleur, ou un damier gris quand il est caché (alpha nul).
         float3 paperColor = u.paper.rgb;

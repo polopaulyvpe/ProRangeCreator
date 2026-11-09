@@ -107,10 +107,28 @@ extension CanvasSession {
         return ViewState.rotation(yaw: r.x, pitch: r.y, roll: r.z)
     }
 
-    /// Applique l'aperçu à tous les calques et masques (une seule entrée d'historique).
+    /// Pixels et masque du calque actif, ou de tous les calques d'un groupe actif.
+    private var activeRotationLayers: [TiledLayer] {
+        ([activeID] + stack.descendants(of: activeID)).compactMap { stack.item($0) }.flatMap { item -> [TiledLayer] in
+            [item.layer, item.mask].compactMap { $0 }
+        }
+    }
+
+    /// Ouvre le panneau de rotation pour le calque actif seul.
+    func openLayerRotation() {
+        if refuseIfLocked() { return }
+        strokeCancelled()
+        applyTransform()
+        rotationLayerOnly = true
+        showRotation = true
+    }
+
+    /// Applique l'aperçu aux calques concernés et à leurs masques (une seule entrée d'historique).
     func applySphereRotation() {
         strokeCancelled()
         let rotation = previewRotation
+        let name = rotationLayerOnly ? "Rotation du calque" : "Rotation de la sphère"
+        let layers = rotationLayerOnly ? activeRotationLayers : stack.allTiledLayers
         defer {
             sphereRotation = .zero
             showRotation = false
@@ -118,7 +136,7 @@ extension CanvasSession {
         guard sphereRotation != .zero else { return }
         if warp == nil, let device { warp = try? WarpEngine(device: device) }
         var changes: [(layerID: UUID, deltas: [TileDelta])] = []
-        for layer in stack.allTiledLayers {
+        for layer in layers {
             let deltas: [TileDelta]
             if let warp, layer.format == .rgba16Float, let result = try? warp.rotate(layer, by: rotation) {
                 deltas = result
@@ -130,7 +148,7 @@ extension CanvasSession {
             if !deltas.isEmpty { changes.append((layer.id, deltas)) }
         }
         guard let first = changes.first else { return }
-        history.record(HistoryEntry(name: "Rotation de la sphère", layerID: first.layerID, deltas: first.deltas,
+        history.record(HistoryEntry(name: name, layerID: first.layerID, deltas: first.deltas,
                                     otherLayers: Array(changes.dropFirst())))
         refreshHistory()
         structureChanged()
@@ -249,8 +267,8 @@ struct SphereRotationPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Rotation de la sphère").font(.headline)
-            Text("Déplace le soleil ou recale l'horizon. Tous les calques tournent ensemble ; l'aperçu est immédiat.")
+            Text(session.rotationLayerOnly ? "Tourner ce calque" : "Rotation de la sphère").font(.headline)
+            Text(rotationHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             axis("Lacet", \.x)
@@ -264,6 +282,16 @@ struct SphereRotationPanel: View {
                     .disabled(session.sphereRotation == .zero)
             }
         }
+    }
+
+    private var rotationHelp: String {
+        guard session.rotationLayerOnly else {
+            return "Déplace le soleil ou recale l'horizon. Tous les calques tournent ensemble ; l'aperçu est immédiat."
+        }
+        if session.canvas?.usesFastPath == true {
+            return "Seul ce calque tourne autour de toi, avec son masque. L'aperçu est immédiat."
+        }
+        return "Seul ce calque tourne, avec son masque. Il a un masque ou fait partie d'un groupe : le résultat apparaît en appliquant."
     }
 
     private func axis(_ title: String, _ keyPath: WritableKeyPath<SIMD3<Double>, Double>) -> some View {

@@ -8,6 +8,8 @@ public enum GestureAction: String, Codable, CaseIterable, Sendable {
     case redo
     case toggleInterface
     case toggleUnfold
+    case turnAround
+    case nextBookmark
     case none
 
     public var label: String {
@@ -16,6 +18,8 @@ public enum GestureAction: String, Codable, CaseIterable, Sendable {
         case .redo: "Rétablir"
         case .toggleInterface: "Masquer / afficher l'interface"
         case .toggleUnfold: "Déplier / replier"
+        case .turnAround: "Demi-tour"
+        case .nextBookmark: "Regard suivant"
         case .none: "Rien"
         }
     }

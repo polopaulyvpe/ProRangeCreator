@@ -31,7 +31,8 @@ extension CanvasSession {
         quickShapePressure = pressure
         quickShapeLastMove = CACurrentMediaTime()
         stopQuickShapeWatch()
-        guard quickShapeEnabled, tool == .brush || tool == .eraser else { return }
+        // La perspective et le plan guident déjà le trait : pas de forme rapide par-dessus.
+        guard quickShapeEnabled, !perspective.isEnabled, activePlane == nil, tool == .brush || tool == .eraser else { return }
         quickShapeTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.quickShapeTick() }
         }
