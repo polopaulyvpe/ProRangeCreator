@@ -260,6 +260,9 @@ final class CanvasSession {
     @ObservationIgnored var strokeSpeed = 0.0
     @ObservationIgnored var strokeTilt = 0.0
     @ObservationIgnored var lastMoveTime: CFTimeInterval = 0
+    /// Vitesse mesurée à l'écran (voir `StrokeSpeed`) et dernier point de mesure.
+    @ObservationIgnored var speedMeter = StrokeSpeed()
+    @ObservationIgnored var speedFrom: (ndc: SIMD2<Double>, time: Double)?
     @ObservationIgnored var strokeGrainOffset = SIMD2<Double>.zero
     @ObservationIgnored var strokeRotationOffset = 0.0
     /// Dernier azimut connu du Pencil (dans le plan tangent), tirages de couleur du trait.
@@ -444,13 +447,19 @@ final class CanvasSession {
     }
 
     /// `azimuth` : point d'écran (NDC) un peu plus loin dans la direction de l'azimut du Pencil (nil au doigt).
-    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, azimuth: SIMD2<Double>? = nil) {
+    /// `time` : instant de la mesure (secondes, horloge de `UITouch.timestamp`) ; `pen` : Pencil ou doigt (rythme de mesure).
+    func strokeBegan(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, azimuth: SIMD2<Double>? = nil,
+                     time: Double = CACurrentMediaTime(), pen: Bool = true) {
         strokeTilt = tilt
         strokeAzimuth = view.direction(atNDC: ndc, aspect: aspect).flatMap { azimuthAngle(at: $0, toward: azimuth, aspect: aspect) }
         let mapped = preferences.mappedPressure(pressure)
         // Stabilisation (Atelier) : un stabilisateur neuf par trait, pour les outils qui peignent.
-        stabilizer = stabilizesStroke && settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer) : nil
-        let (ndc, pressure) = stabilize(ndc, mapped)
+        stabilizer = stabilizesStroke && settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer, pen: pen) : nil
+        let start = stabilizer != nil ? stabilizer!.begin(ndc, pressure: mapped, time: time) : (point: ndc, pressure: mapped)
+        let ndc = start.point
+        let pressure = start.pressure
+        speedMeter = StrokeSpeed()
+        speedFrom = (ndc, time)
         lastAspect = aspect
         guard let canvas, let raw = view.direction(atNDC: ndc, aspect: aspect) else { return }
         strokeLock = nil
@@ -522,13 +531,20 @@ final class CanvasSession {
     }
 
     func strokeMoved(ndc: SIMD2<Double>, aspect: Double, pressure: Double, tilt: Double = 0, azimuth: SIMD2<Double>? = nil,
-                     alreadyMapped: Bool = false) {
+                     alreadyMapped: Bool = false, time: Double = CACurrentMediaTime()) {
         strokeTilt = tilt
         if azimuth != nil, let raw = view.direction(atNDC: ndc, aspect: aspect) {
             strokeAzimuth = azimuthAngle(at: raw, toward: azimuth, aspect: aspect) ?? strokeAzimuth
         }
-        let mapped = alreadyMapped ? pressure : preferences.mappedPressure(pressure)
-        let (ndc, pressure) = alreadyMapped ? (ndc, mapped) : stabilize(ndc, mapped)
+        // Stabilisation : chaque mesure peut rendre aucun, un ou plusieurs points lissés (les moyennes attendent la suite).
+        if !alreadyMapped, stabilizer != nil {
+            let smoothed = stabilizer!.add(ndc, pressure: preferences.mappedPressure(pressure), time: time)
+            for point in smoothed {
+                strokeMoved(ndc: point.point, aspect: aspect, pressure: point.pressure, tilt: tilt, alreadyMapped: true, time: time)
+            }
+            return
+        }
+        let pressure = alreadyMapped ? pressure : preferences.mappedPressure(pressure)
         lastAspect = aspect
         if transform != nil {
             transformMoved(ndc: ndc)
@@ -547,12 +563,12 @@ final class CanvasSession {
             strokeLock = perspective.lock(from: strokeLockStart, through: raw)
         }
         let d = assisted(raw)
-        // Vitesse du trait (Dynamique > Vitesse), lissée ; les touches regroupées d'une même image ne comptent pas.
-        let now = CACurrentMediaTime()
-        if let last = lastDirection, now - lastMoveTime > 0.004 {
-            let instant = Sphere.angle(last, d) / (now - lastMoveTime)
-            strokeSpeed = strokeSpeed * 0.7 + instant * 0.3
-            lastMoveTime = now
+        // Vitesse du trait (Dynamique > Vitesse), mesurée à l'écran ; les points d'une même mesure s'additionnent.
+        if let from = speedFrom, time - from.time > 0.004 {
+            let delta = (ndc - from.ndc) * SIMD2(Double(viewSize.width), Double(viewSize.height)) / 2
+            speedMeter.add(points: simd_length(delta), seconds: time - from.time)
+            strokeSpeed = speedMeter.value
+            speedFrom = (ndc, time)
         }
         if let plane = activePlane, let last = lastDirection, Sphere.angle(last, d) > 1e-7 {
             planeSpacingScale = plane.spacingScale(at: d, moving: d - last)
@@ -770,7 +786,7 @@ final class CanvasSession {
         // StreamLine : le trait rattrape la dernière position de la main avant de se terminer.
         if var pending = stabilizer {
             stabilizer = nil
-            for point in pending.finish(step: 0.004) {
+            for point in pending.finish() {
                 strokeMoved(ndc: point.point, aspect: lastAspect, pressure: point.pressure, tilt: strokeTilt, alreadyMapped: true)
             }
         }
@@ -822,13 +838,6 @@ final class CanvasSession {
     /// Outils dont le trait est stabilisé (pas la sélection, ni les poignées de transformation).
     private var stabilizesStroke: Bool {
         transform == nil && [PaintTool.brush, .eraser, .smudge, .clone, .effect, .liquify].contains(tool)
-    }
-
-    /// Point et pression stabilisés (inchangés sans stabilisateur).
-    private func stabilize(_ ndc: SIMD2<Double>, _ pressure: Double) -> (SIMD2<Double>, Double) {
-        guard stabilizer != nil else { return (ndc, pressure) }
-        let result = stabilizer!.add(ndc, pressure: pressure)
-        return (result.point, result.pressure)
     }
 
     // MARK: - Historique
@@ -1019,7 +1028,7 @@ final class CanvasMTKView: MTKView {
         guard drawingTouch == nil, let touch = touches.first(where: canDraw) else { return }
         drawingTouch = touch
         session.strokeBegan(ndc: ndc(point(touch)), aspect: aspect, pressure: pressure(touch), tilt: tilt(touch),
-                            azimuth: azimuth(touch))
+                            azimuth: azimuth(touch), time: touch.timestamp, pen: touch.type == .pencil)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1030,7 +1039,8 @@ final class CanvasMTKView: MTKView {
             return
         }
         for t in event?.coalescedTouches(for: touch) ?? [touch] {
-            session.strokeMoved(ndc: ndc(point(t)), aspect: aspect, pressure: pressure(t), tilt: tilt(t), azimuth: azimuth(t))
+            session.strokeMoved(ndc: ndc(point(t)), aspect: aspect, pressure: pressure(t), tilt: tilt(t), azimuth: azimuth(t),
+                                time: t.timestamp)
         }
         // Anticipation : le trait est prolongé jusqu'où UIKit prévoit le Pencil (une image d'avance sur la main).
         let predicted = touch.type == .pencil ? event?.predictedTouches(for: touch) ?? [] : []

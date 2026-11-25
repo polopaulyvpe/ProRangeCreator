@@ -817,36 +817,38 @@ final class BrushPadUIView: UIView {
     private var lastTilt = 0.0
     private var lastTime: TimeInterval = 0
 
-    private func add(_ touch: UITouch) {
-        let p = touch.location(in: self)
+    private func add(_ touch: UITouch, first: Bool = false) {
+        let p = touch.type == .pencil ? touch.preciseLocation(in: self) : touch.location(in: self)
         let pressure = touch.type == .pencil && touch.maximumPossibleForce > 0 ? Double(touch.force / touch.maximumPossibleForce) : 1
         let tilt = touch.type == .pencil ? min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2))) : 0
-        var point = SIMD2<Double>(Double(p.x * scale), Double(p.y * scale))
-        var pressed = pressure
-        if stabilizer != nil {
-            let stable = stabilizer!.add(point, pressure: pressure)
-            point = stable.point
-            pressed = stable.pressure
-        }
+        let point = SIMD2<Double>(Double(p.x * scale), Double(p.y * scale))
         lastTilt = tilt
         lastTime = touch.timestamp
-        painter?.addPoint(point, pressure: pressed, tilt: tilt, time: touch.timestamp)
+        // Stabilisation : une mesure peut rendre aucun, un ou plusieurs points lissés.
+        var points: [StrokeStabilizer.Output] = [(point, pressure)]
+        if stabilizer != nil {
+            points = first ? [stabilizer!.begin(point, pressure: pressure, time: touch.timestamp)]
+                : stabilizer!.add(point, pressure: pressure, time: touch.timestamp)
+        }
+        for stable in points {
+            painter?.addPoint(stable.point, pressure: stable.pressure, tilt: tilt, time: touch.timestamp)
+        }
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         ensurePainter()
         guard let touch = touches.first else { return }
         painter?.begin(seed: UInt64.random(in: 1...UInt64.max))
-        stabilizer = settings.stabilizer.isActive
-            ? StrokeStabilizer(settings: settings.stabilizer, unit: Double(bounds.height * scale) / 2) : nil
-        add(touch)
+        painter?.pointsPerPixel = Double(1 / scale)
+        stabilizer = settings.stabilizer.isActive ? StrokeStabilizer(settings: settings.stabilizer, pen: touch.type == .pencil) : nil
+        add(touch, first: true)
         refresh()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         if var pending = stabilizer {
             stabilizer = nil
-            for point in pending.finish(step: 1) {
+            for point in pending.finish() {
                 lastTime += 0.002
                 painter?.addPoint(point.point, pressure: point.pressure, tilt: lastTilt, time: lastTime)
             }

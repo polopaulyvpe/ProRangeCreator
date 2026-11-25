@@ -19,7 +19,7 @@ observe et ce qu'on fait pour l'égaler.
 | **Pression** | Taille, opacité, flux, bavure, avec courbes | Tout, avec courbes par réglage |
 | **Inclinaison** | Opacité, dégradé, bavure, taille, au-delà d'un seuil | Tout. La rondeur selon l'inclinaison (forme couchée) ne marche qu'avec une forme importée |
 | **Azimut** | La forme tourne avec la direction du Pencil | Fait (« La forme suit l'azimut ») ; chaque copie de symétrie a le sien |
-| **StreamLine et stabilisation** | Lissage, moyenne mobile, filtrage des tremblements | Déjà là (StreamLine, stabilisation, filtrage du mouvement, lissage de la pression) ; le tracé suit en plus une courbe lisse |
+| **StreamLine et stabilisation** | Lissage, moyenne mobile, filtrage des tremblements | Porté de ProCraft le 25 novembre (voir NOTICE.md) : réglé en temps réel, quel que soit le rythme des mesures ; filtrage du mouvement en passe-bas sans déphasage, StreamLine qui rejoint la mine au lever, stabilisation symétrique ; le tracé suit en plus une courbe lisse |
 | **Mélange humide (shaders)** | Dilution, charge, attaque, tirage, grade, flou | **Calculé** depuis le 2 novembre : le pinceau prend la couleur de la toile, se vide, se dilue (voir `WetMixer`) |
 | **Dynamique de couleur** | Variation par tampon et par trait, pression, inclinaison, couleur secondaire | **Faite** ; couleur secondaire dans le panneau Couleur (toucher l'échange) |
 

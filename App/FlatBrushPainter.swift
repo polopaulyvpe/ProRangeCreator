@@ -33,6 +33,9 @@ struct FlatBrushPainter {
     private var primary = Stream()
     private var secondary = Stream()
     private var speed = 0.0
+    private var speedMeter = StrokeSpeed()
+    /// Points d'écran par pixel de l'image (le bloc d'essai est rendu à demi-résolution).
+    var pointsPerPixel = 1.0
     private var lastPoint: (position: SIMD2<Double>, time: Double)?
     private var grainOffset = SIMD2<Double>.zero
     private var rotationOffset = 0.0
@@ -67,6 +70,7 @@ struct FlatBrushPainter {
         grainOffset = [primary.random.next(), primary.random.next()]
         rotationOffset = primary.random.next() * 2 * .pi
         speed = 0
+        speedMeter = StrokeSpeed()
         lastPoint = nil
         records = []
     }
@@ -128,11 +132,16 @@ struct FlatBrushPainter {
 
     /// Ajoute un point du trait (pixels de l'image) : des dabs sont posés à l'espacement du pinceau depuis le précédent.
     mutating func addPoint(_ point: SIMD2<Double>, pressure: Double, tilt: Double = 0, time: Double) {
-        if let last = lastPoint, time - last.time > 0.004 {
-            let instant = simd_distance(point, last.position) / pixelsPerRadian / (time - last.time)
-            speed = speed * 0.7 + instant * 0.3
+        // Vitesse mesurée à l'écran, comme sur la toile ; les points d'une même mesure s'additionnent.
+        if let last = lastPoint {
+            if time - last.time > 0.004 {
+                speedMeter.add(points: simd_distance(point, last.position) * pointsPerPixel, seconds: time - last.time)
+                speed = speedMeter.value
+                lastPoint = (point, time)
+            }
+        } else {
+            lastPoint = (point, time)
         }
-        lastPoint = (point, time)
         // Copie locale du flux : on ne peut pas passer une propriété en inout à une méthode mutante de la même structure.
         var stream = primary
         advance(&stream, brush: settings, isSecondary: false, to: point, pressure: pressure, tilt: tilt)

@@ -297,10 +297,10 @@ public struct BrushSettings: Equatable, Sendable {
             sizeScale *= 1 - min(1, max(0, taperSize)) * (1 - t)
             alphaScale *= 1 - min(1, max(0, taperOpacity)) * (1 - t)
         }
-        // Vitesse : pleine à 3 radians par seconde (un geste rapide).
-        let fast = min(1, context.speed / 3)
-        sizeScale *= max(0.05, 1 - speedSize * fast)
-        alphaScale *= max(0, 1 - speedOpacity * fast)
+        // Vitesse dans [0, 1] (voir `StrokeSpeed`) ; un réglage négatif agit au contraire quand on va lentement.
+        let fast = min(1, max(0, context.speed))
+        sizeScale *= max(0.05, StrokeSpeed.scale(amount: speedSize, speed: fast))
+        alphaScale *= max(0, StrokeSpeed.scale(amount: speedOpacity, speed: fast))
         // Inclinaison au-delà du seuil.
         let threshold = min(89, max(0, tiltAngleDegrees))
         let tilted = min(1, max(0, (context.tilt * 90 - threshold) / (90 - threshold)))
@@ -369,9 +369,9 @@ public struct BrushSettings: Equatable, Sendable {
         return dab
     }
 
-    /// Espacement du prochain dab, avec sa variation ; `speed` (radians par seconde) l'augmente selon `speedSpacing`.
+    /// Espacement du prochain dab, avec sa variation ; `speed` (dans [0, 1], voir `StrokeSpeed`) l'augmente selon `speedSpacing`.
     public func spacing(radius: Double, random: Double, speed: Double = 0) -> Double {
-        let fast = min(1, speed / 3)
+        let fast = min(1, max(0, speed))
         let base = radius * spacing * (1 + min(1, max(0, spacingJitter)) * (random * 2 - 1))
         return max(base * (1 + max(0, speedSpacing) * fast), 1e-4)
     }
@@ -404,7 +404,7 @@ public struct BrushSettings: Equatable, Sendable {
 public struct StrokeContext: Sendable, Equatable {
     /// Longueur parcourue depuis le début du trait, en radians sur la sphère.
     public var distance: Double
-    /// Vitesse du trait, en radians par seconde.
+    /// Vitesse du trait dans [0, 1], mesurée à l'écran (voir `StrokeSpeed`).
     public var speed: Double
     /// Inclinaison du Pencil : 0 = vertical, 1 = à plat.
     public var tilt: Double
