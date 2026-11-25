@@ -82,6 +82,33 @@ final class SpatialToolTests: XCTestCase {
         XCTAssertGreaterThan(pixel(layer, latitude: 0, longitude: 0.3).w, 0.3, "la couleur a été traînée")
     }
 
+    /// Doigt qui garde la couverture : tirer du vide sur de la peinture la déplace sans la rendre transparente ;
+    /// sans l'option, la peinture s'efface.
+    func testSmudgeKeepsCoverageAndBlurs() {
+        func run(keep: Bool, blur: Float) -> TiledLayer {
+            let layer = TiledLayer(name: "t", width: 1024, height: 512)
+            layer.stamp(SphericalDab(center: Equirect.direction(latitude: 0, longitude: 0.3), radius: 0.15, hardness: 1,
+                                     color: [1, 0, 0, 1]))
+            let from = Equirect.direction(latitude: 0, longitude: 0)
+            let to = Equirect.direction(latitude: 0, longitude: 0.3)
+            layer.smudge(SphericalDab(center: to, radius: 0.1, hardness: 1, color: [0, 0, 0, 1]), from: from, strength: 1,
+                         blur: blur, keepCoverage: keep)
+            return layer
+        }
+        XCTAssertLessThan(pixel(run(keep: false, blur: 0), latitude: 0, longitude: 0.3).w, 0.1, "du vide tiré efface")
+        XCTAssertEqual(pixel(run(keep: true, blur: 0), latitude: 0, longitude: 0.3).w, 1, accuracy: 1e-3, "couverture gardée")
+
+        // Flou : sur un bord net, la couleur reprise est une moyenne (ni le plein ni le vide).
+        let layer = TiledLayer(name: "t", width: 1024, height: 512)
+        let edge = Equirect.direction(latitude: 0, longitude: 0)
+        layer.stamp(SphericalDab(center: Equirect.direction(latitude: 0, longitude: -0.2), radius: 0.2, hardness: 1, color: [0, 1, 0, 1]))
+        let target = Equirect.direction(latitude: 0.6, longitude: 1)
+        layer.smudge(SphericalDab(center: target, radius: 0.2, hardness: 1, color: [0, 0, 0, 1]), from: edge, strength: 1, blur: 1)
+        let picked = pixel(layer, latitude: 0.6, longitude: 1).w
+        XCTAssertGreaterThan(picked, 0.15)
+        XCTAssertLessThan(picked, 0.85)
+    }
+
     func testCPURotationMovesContentAndIsReversible() {
         let layer = TiledLayer(name: "t", width: 512, height: 256)
         layer.stamp(SphericalDab(center: [0, 0, -1], radius: 0.3, hardness: 0.6, color: [0.2, 0.7, 0.3, 1]))

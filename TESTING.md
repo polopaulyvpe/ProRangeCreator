@@ -34,7 +34,10 @@ gh run view --log-failed
 | `Drawing360Tests` | Trait calé sur le grand cercle du point de fuite, choix de l'axe selon le geste, départ sur le point de fuite ; repère rigide orthogonal, verticales fixes, points libres ; ellipse d'un tampon sur un plan contre la géométrie réelle du sol, ellipse rendue, ellipse très fine, ligne de fuite, espacement ; regards (plus court chemin, capture dans les trois vues, faces opposées) |
 | `PaintDynamicsTests` | Couleur par texel du masque (texel vierge exact, glacis plein recouvert selon la force du tampon) ; dynamique de couleur (neutre, couleur secondaire par la pression, assombrir, demi-tour de teinte) ; mélange humide (sans dilution rien ne se passe ; le tirage prend la couleur de la toile, toile vide sans effet, dilution et charge) ; azimut, rondeur, bavure, dégradé ; azimut interpolé par le plus court chemin |
 
+| `PSDWriterTests` (PRImaging) | PackBits aller-retour ; PSD relu : en-tête, calques (modes, opacité, visibilité, nom Unicode), longueurs des canaux, image composée décodée |
 | `ForeignBrushTests` (PRImaging) | Pinceau et pipe GIMP, pinceau GIMP calculé, PackBits, ABR versions 1-2 (brut et compressé, tampon calculé passé) et 6 (échantillon, préréglage nommé, espacement, angle, rondeur, réglages ignorés), préréglages Krita (rond calculé, image embarquée, opacité, pression) |
+
+Doigt : `SpatialToolTests.testSmudgeKeepsCoverageAndBlurs` (couverture gardée, flou de la couleur reprise).
 
 ## Suites actuelles (PREngine) — sautées sans GPU
 

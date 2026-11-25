@@ -42,6 +42,7 @@ enum ExportKind: String, CaseIterable {
     case png
     case jpeg
     case tiff
+    case psd
 
     var label: String {
         switch self {
@@ -50,6 +51,7 @@ enum ExportKind: String, CaseIterable {
         case .png: "PNG"
         case .jpeg: "JPG"
         case .tiff: "TIFF flottant"
+        case .psd: "Photoshop à calques (.psd)"
         }
     }
 }
@@ -236,7 +238,8 @@ extension CanvasSession {
     }
 
     /// Exporte la pile visible (ou le calque actif seul) à une ou plusieurs résolutions.
-    func startExport(format: PanoramaFormat, options: PanoramaExportOptions, downscales: [Int], activeLayerOnly: Bool) {
+    /// `psd` : un fichier Photoshop à calques (8 bits, première résolution cochée) au lieu du format panoramique.
+    func startExport(format: PanoramaFormat, options: PanoramaExportOptions, downscales: [Int], activeLayerOnly: Bool, psd: Bool = false) {
         guard !isExporting, !downscales.isEmpty else { return }
         strokeCancelled()
         var source = stack
@@ -246,7 +249,7 @@ extension CanvasSession {
                                 items: [StackItem(kind: .layer(layer), name: item.name)])
             name += "-" + sanitized(item.name)
         }
-        let url = Self.exportsDirectory.appendingPathComponent("\(name).\(format.fileExtension)")
+        let url = Self.exportsDirectory.appendingPathComponent("\(name).\(psd ? "psd" : format.fileExtension)")
         let cancel = CancelFlag()
         let job = UncheckedStack(stack: source, space: blendSpace)
         exportCancel = cancel
@@ -260,7 +263,10 @@ extension CanvasSession {
                 return !cancel.isCancelled
             }
             do {
-                if downscales == [1] {
+                if psd {
+                    result = .success([try PSDWriter.export(job.stack, downscale: downscales.first ?? 1, paper: options.paper,
+                                                            space: job.space, to: url, progress: report)])
+                } else if downscales == [1] {
                     var single = options
                     single.downscale = 1
                     result = .success(try PanoramaExporter.export(job.stack, as: format, options: single, space: job.space,
@@ -366,6 +372,7 @@ struct ExportSheet: View {
         case .png: .png(bitDepth: pngDepth, includeAlpha: includeAlpha)
         case .jpeg: .jpeg(quality: jpegQuality)
         case .tiff: .tiff(bitsPerSample: tiffDepth, includeAlpha: includeAlpha)
+        case .psd: .png(bitDepth: 8, includeAlpha: true)
         }
     }
 
@@ -424,7 +431,7 @@ struct ExportSheet: View {
                     }
                     Toggle("Miroir horizontal", isOn: $flip)
                 }
-                if format.isDisplayReferred {
+                if format.isDisplayReferred, kind != .psd {
                     Section("Rendu écran (PNG, JPG)") {
                         LabeledContent("Exposition") {
                             Slider(value: $exposure, in: -6...6, step: 0.25)
@@ -477,6 +484,10 @@ struct ExportSheet: View {
                     Text("16 bits (half)").tag(16)
                     Text("32 bits (float)").tag(32)
                 }
+            case .psd:
+                Text("Un calque Photoshop par calque, 8 bits sRGB, avec noms, modes, opacités et masques appliqués ; les groupes sont aplatis en calques, les valeurs HDR écrêtées. Équirectangulaire seulement, à la plus grande résolution cochée.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if supportsAlpha {
                 Toggle("Canal alpha (RGBA)", isOn: $includeAlpha)
@@ -492,7 +503,7 @@ struct ExportSheet: View {
             } else {
                 Button("Exporter", systemImage: "square.and.arrow.up") {
                     session.startExport(format: format, options: options, downscales: upscaling ? [1] : downscales.sorted(),
-                                        activeLayerOnly: activeLayerOnly)
+                                        activeLayerOnly: activeLayerOnly, psd: kind == .psd)
                 }
             }
             if !session.lastExportURLs.isEmpty {

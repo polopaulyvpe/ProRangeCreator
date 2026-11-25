@@ -73,13 +73,16 @@ extension CanvasSession {
     }
 
     func applySmudge(_ centers: [Vec3], pressure: Double) {
-        let strength = Float(smudgeStrength)
+        let blur = Float(smudgeBlur)
+        let keep = smudgeKeepsCoverage
         for center in centers {
             let images = symmetry.images(of: center)
             for (i, image) in images.enumerated() where i < smudgePrevious.count {
                 let previous = smudgePrevious[i]
                 let dab = dab(at: image, pressure: pressure)
-                canvas?.edit { $0.smudge(dab, from: previous, strength: strength) }
+                // La pression (opacité du dab) dose aussi le doigt : appuyer fort traîne plus.
+                let strength = Float(smudgeStrength) * dab.color.w
+                canvas?.edit { $0.smudge(dab, from: previous, strength: strength, blur: blur, keepCoverage: keep) }
                 smudgePrevious[i] = image
             }
         }
@@ -190,6 +193,8 @@ struct ToolOptions: View {
             LiquifyOptions(session: session)
         case .smudge:
             labeledSlider("Force", value: $session.smudgeStrength, range: 0.05...1)
+            labeledSlider("Flou", value: $session.smudgeBlur, range: 0...1)
+            Toggle("Garder la couverture", isOn: $session.smudgeKeepsCoverage).fixedSize()
         case .clone:
             Button(session.cloneSource == nil ? "Touche la source" : "Nouvelle source") { session.cloneSource = nil }
                 .disabled(session.cloneSource == nil)

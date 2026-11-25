@@ -13,13 +13,15 @@ final class ForeignBrushTests: XCTestCase {
         let units = Array(s.utf16) + [0]
         return u32(UInt32(units.count)) + units.flatMap { u16($0) }
     }
-    private func key(_ s: String) -> [UInt8] { s.count == 4 ? u32(0) + Array(s.utf8) : u32(UInt32(s.count)) + Array(s.utf8) }
+    private func key(_ s: String) -> [UInt8] { cat(s.count == 4 ? u32(0) : u32(UInt32(s.count)), Array(s.utf8)) }
+    private func a(_ s: String) -> [UInt8] { Array(s.utf8) }
+    /// Assemble des morceaux d'octets (une longue chaîne de « + » est trop lente à typer pour le compilateur).
+    private func cat(_ parts: [UInt8]...) -> [UInt8] { parts.flatMap { $0 } }
 
     /// Pinceau GIMP version 2 : image 3 × 2 en niveaux de gris.
     private func gbr(name: String, pixels: [UInt8], width: UInt32 = 3, height: UInt32 = 2, spacing: UInt32 = 25) -> [UInt8] {
         let nameBytes = Array(name.utf8) + [0]
-        return u32(UInt32(28 + nameBytes.count)) + u32(2) + u32(width) + u32(height) + u32(1) + Array("GIMP".utf8) + u32(spacing)
-            + nameBytes + pixels
+        return cat(u32(UInt32(28 + nameBytes.count)), u32(2), u32(width), u32(height), u32(1), a("GIMP"), u32(spacing), nameBytes, pixels)
     }
 
     func testGimpBrushAndPipe() throws {
@@ -33,8 +35,8 @@ final class ForeignBrushTests: XCTestCase {
         XCTAssertEqual(tip.pixels, [0, 128, 255, 255, 128, 0])
 
         // Pipe : la première image vide est passée au profit de la suivante.
-        let pipe = Array("Herbe\n2 ncells:2 dim:1\n".utf8) + gbr(name: "", pixels: [UInt8](repeating: 0, count: 6))
-            + gbr(name: "brin", pixels: [9, 9, 9, 9, 9, 9])
+        let pipe = cat(a("Herbe\n2 ncells:2 dim:1\n"), gbr(name: "", pixels: [UInt8](repeating: 0, count: 6)),
+                       gbr(name: "brin", pixels: [9, 9, 9, 9, 9, 9]))
         let tips = ForeignBrushImport.gimpPipe(pipe)
         XCTAssertEqual(tips.count, 2)
         XCTAssertEqual(tips[0].name, "brin")
@@ -63,20 +65,21 @@ final class ForeignBrushTests: XCTestCase {
 
     /// Tampon d'ABR version 2 : en-tête, nom, rectangle, profondeur, compression et image.
     private func abrTip(name: String, compressed: Bool) -> [UInt8] {
-        var body = u32(0) + u16(30) + unicode(name) + [1] + [UInt8](repeating: 0, count: 8)
-        body += i32(0) + i32(0) + i32(2) + i32(3) + u16(8) + [compressed ? 1 : 0]
+        let flag: [UInt8] = [compressed ? 1 : 0]
+        var body = cat(u32(0), u16(30), unicode(name), [1], [UInt8](repeating: 0, count: 8))
+        body += cat(i32(0), i32(0), i32(2), i32(3), u16(8), flag)
         if compressed {
             // Deux rangées de 3 : [5, 5, 5] et [1, 2, 3].
-            body += u16(2) + u16(4) + [0xFE, 5] + [2, 1, 2, 3]
+            body += cat(u16(2), u16(4), [0xFE, 5], [2, 1, 2, 3])
         } else {
             body += [5, 5, 5, 1, 2, 3]
         }
-        return u16(2) + u32(UInt32(body.count)) + body
+        return cat(u16(2), u32(UInt32(body.count)), body)
     }
 
     func testPhotoshopOldVersions() throws {
-        let computed = u16(1) + u32(4) + [0, 0, 0, 0]
-        let file = u16(2) + u16(3) + computed + abrTip(name: "Brosse", compressed: false) + abrTip(name: "Éponge", compressed: true)
+        let computed = cat(u16(1), u32(4), [0, 0, 0, 0])
+        let file = cat(u16(2), u16(3), computed, abrTip(name: "Brosse", compressed: false), abrTip(name: "Éponge", compressed: true))
         let presets = try ForeignBrushImport.read(data: Data(file), fileName: "set.abr")
         XCTAssertEqual(presets.map(\.name), ["Brosse", "Éponge"], "le tampon calculé est passé")
         XCTAssertEqual(presets[0].settings.spacing, 0.6, accuracy: 1e-9)
@@ -90,27 +93,27 @@ final class ForeignBrushTests: XCTestCase {
     func testPhotoshopSectionsWithPreset() throws {
         // Échantillon (version 6.1) : identifiant, rectangle, image brute 2 × 2.
         let id = "abc-123"
-        var sample = [UInt8(id.utf8.count)] + Array(id.utf8) + [UInt8](repeating: 0, count: 10)
-        sample += i32(0) + i32(0) + i32(2) + i32(2) + u16(8) + [0] + [10, 20, 30, 40]
-        var samp = u32(UInt32(sample.count)) + sample
+        var sample = cat([UInt8(id.utf8.count)], a(id), [UInt8](repeating: 0, count: 10))
+        sample += cat(i32(0), i32(0), i32(2), i32(2), u16(8), [0], [10, 20, 30, 40])
+        var samp = cat(u32(UInt32(sample.count)), sample)
         while samp.count % 4 != 0 { samp.append(0) }
 
         // Descripteur : un préréglage « Fusain » dont le tampon nomme l'échantillon, espacé de 50 %, tourné de 45°.
-        let tip = unicode("") + key("brushTip") + u32(4)
-            + key("Spcn") + Array("UntF".utf8) + Array("#Prc".utf8) + f64(50)
-            + key("Angl") + Array("UntF".utf8) + Array("#Ang".utf8) + f64(45)
-            + key("Rndn") + Array("UntF".utf8) + Array("#Prc".utf8) + f64(80)
-            + key("sampledData") + Array("TEXT".utf8) + unicode(id)
-        let preset = unicode("") + key("brushPreset") + u32(3)
-            + key("Nm  ") + Array("TEXT".utf8) + unicode("Fusain")
-            + key("Brsh") + Array("Objc".utf8) + tip
-            + key("useScatter") + Array("bool".utf8) + [1]
-        let desc = u32(16) + unicode("") + key("null") + u32(1) + key("Brsh") + Array("VlLs".utf8) + u32(1) + Array("Objc".utf8) + preset
-        var file = u16(6) + u16(1)
-        file += Array("8BIM".utf8) + Array("samp".utf8) + u32(UInt32(samp.count)) + samp
+        let tip = cat(unicode(""), key("brushTip"), u32(4),
+                      key("Spcn"), a("UntF"), a("#Prc"), f64(50),
+                      key("Angl"), a("UntF"), a("#Ang"), f64(45),
+                      key("Rndn"), a("UntF"), a("#Prc"), f64(80),
+                      key("sampledData"), a("TEXT"), unicode(id))
+        let preset = cat(unicode(""), key("brushPreset"), u32(3),
+                         key("Nm  "), a("TEXT"), unicode("Fusain"),
+                         key("Brsh"), a("Objc"), tip,
+                         key("useScatter"), a("bool"), [1])
+        let desc = cat(u32(16), unicode(""), key("null"), u32(1), key("Brsh"), a("VlLs"), u32(1), a("Objc"), preset)
+        var file = cat(u16(6), u16(1))
+        file += cat(a("8BIM"), a("samp"), u32(UInt32(samp.count)), samp)
         var padded = desc
         while padded.count % 4 != 0 { padded.append(0) }
-        file += Array("8BIM".utf8) + Array("desc".utf8) + u32(UInt32(desc.count)) + padded
+        file += cat(a("8BIM"), a("desc"), u32(UInt32(desc.count)), padded)
 
         let presets = try ForeignBrushImport.read(data: Data(file), fileName: "fusain.abr")
         XCTAssertEqual(presets.count, 1, "l'échantillon nommé n'est pas compté deux fois")
@@ -127,10 +130,10 @@ final class ForeignBrushTests: XCTestCase {
     private func png(texts: [(String, String)]) -> [UInt8] {
         var out: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
         func chunk(_ type: String, _ data: [UInt8]) {
-            out += u32(UInt32(data.count)) + Array(type.utf8) + data + u32(0)
+            out += cat(u32(UInt32(data.count)), a(type), data, u32(0))
         }
-        chunk("IHDR", u32(1) + u32(1) + [8, 0, 0, 0, 0])
-        for (k, v) in texts { chunk("tEXt", Array(k.utf8) + [0] + Array(v.utf8)) }
+        chunk("IHDR", cat(u32(1), u32(1), [8, 0, 0, 0, 0]))
+        for (k, v) in texts { chunk("tEXt", cat(a(k), [0], a(v))) }
         chunk("IEND", [])
         return out
     }

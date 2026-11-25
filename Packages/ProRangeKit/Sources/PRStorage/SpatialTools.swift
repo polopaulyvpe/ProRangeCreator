@@ -165,12 +165,35 @@ extension TiledLayer {
 
     /// Doigt : chaque texel du dab reçoit la couleur transportée depuis le dab précédent (rotation `previous` → `dab.center`),
     /// mélangée selon `strength` × couverture. Lit l'état courant du calque : la couleur s'étale le long du trait.
+    /// `blur` (0 à 1) : la couleur reprise est la moyenne d'un disque autour du point source, de rayon `blur` × la moitié
+    /// du rayon du dab (la peinture se fond au lieu de garder ses détails, comme le flou du doigt de ProCraft).
+    /// `keepCoverage` : le doigt déplace la couleur sans jamais rendre la peinture plus transparente qu'elle n'était
+    /// (tirer du vide sur de la peinture ne l'efface pas).
     @discardableResult
-    public func smudge(_ dab: SphericalDab, from previous: Vec3, strength: Float) -> Set<TileCoord> {
+    public func smudge(_ dab: SphericalDab, from previous: Vec3, strength: Float, blur: Float = 0,
+                       keepCoverage: Bool = false) -> Set<TileCoord> {
         let back = Sphere.rotation(from: dab.center, to: previous)
         let sampler = LayerSampler(self)
-        return transfer(dab, coverageSource: { d, _ in sampler.sample(direction: back * d) }) { dst, src, a in
-            dst + (src - dst) * (a * strength)
+        let reach = Double(min(1, max(0, blur))) * dab.radius * 0.5
+        let taps: [SIMD2<Double>] = reach > 0
+            ? [.zero] + (0..<6).map { k -> SIMD2<Double> in
+                let angle = Double(k) * .pi / 3
+                return [cos(angle) * reach, sin(angle) * reach]
+            }
+            : [.zero]
+        return transfer(dab, coverageSource: { d, _ in
+            let source = back * d
+            guard taps.count > 1 else { return sampler.sample(direction: source) }
+            let frame = TangentFrame(center: source)
+            let sum = taps.reduce(SIMD4<Float>.zero) { $0 + sampler.sample(direction: frame.unproject($1)) }
+            return sum / Float(taps.count)
+        }) { dst, src, a in
+            let mixed = dst + (src - dst) * (a * strength)
+            guard keepCoverage, mixed.w < dst.w else { return mixed }
+            // Même couleur, couverture d'avant (prémultiplié : on remet à l'échelle).
+            guard mixed.w > 1e-6 else { return dst }
+            let rgb = SIMD3(mixed.x, mixed.y, mixed.z) * (dst.w / mixed.w)
+            return SIMD4(rgb.x, rgb.y, rgb.z, dst.w)
         }
     }
 

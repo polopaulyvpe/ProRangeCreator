@@ -154,6 +154,19 @@ final class CanvasSession {
     var gradientShape: SphericalGradient.Shape = .linear
     var fillThreshold = 0.1
     var smudgeStrength = 0.6
+    /// Doigt : la couleur reprise est fondue (0 = nette) ; il ne rend jamais la peinture plus transparente.
+    var smudgeBlur = 0.3
+    var smudgeKeepsCoverage = true
+    // Fenêtre de référence (voir ReferenceWindow.swift)
+    var showReference = false {
+        didSet { if showReference { scheduleReferenceRefresh() } }
+    }
+    var referenceMode: ReferenceMode = .canvas
+    var referenceCanvas: CGImage?
+    var referencePhoto: CGImage?
+    @ObservationIgnored var referenceTask: Task<Void, Never>?
+    /// Pastille de couleur glissée vers la toile (position à l'écran), nil sinon.
+    var colorDragLocation: CGPoint?
     var cloneSource: Vec3?
     var showRotation = false
     /// Aperçu de rotation de la sphère, en degrés (lacet, tangage, roulis).
@@ -919,6 +932,7 @@ final class CanvasSession {
         canvas?.activeID = activeID
         canvas?.paintingMask = paintingMask
         canvas?.setNeedsRefresh()
+        scheduleReferenceRefresh()
         if let available = MemoryBudgetManager.systemAvailableBytes() {
             guaranteedLayers = stack.guaranteedLayers(availableBytes: available)
         }
@@ -946,6 +960,7 @@ final class CanvasSession {
         timelapseCaptureRequested = timelapseEnabled
         historyRevision += 1
         scheduleAutosave()
+        scheduleReferenceRefresh()
     }
 
     // MARK: - Couleur
@@ -1083,6 +1098,7 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
     private let queue: (any MTLCommandQueue)?
     private let renderer: PanoramaRenderer?
     private var rapidUndoTimer: Timer?
+    private var scrub: ScrubDetector?
 
     init(session: CanvasSession) {
         self.session = session
@@ -1174,6 +1190,20 @@ final class CanvasCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     @objc func handleRedoTap(_ gesture: UITapGestureRecognizer) {
         session.perform(session.preferences.threeFingerDoubleTap)
+    }
+
+    /// Frotté à trois doigts : efface le calque.
+    @objc func handleScrub(_ gesture: UIPanGestureRecognizer) {
+        guard let view = gesture.view else { return }
+        let x = Double(gesture.translation(in: view).x)
+        switch gesture.state {
+        case .began:
+            scrub = ScrubDetector(startX: x)
+        case .changed:
+            if scrub?.moved(to: x) == true { session.scrubToClear() }
+        default:
+            scrub = nil
+        }
     }
 
     @objc func handleFourFingerTap(_ gesture: UITapGestureRecognizer) {
@@ -1268,7 +1298,11 @@ struct MetalCanvas: UIViewRepresentable {
         pencil.delegate = coordinator
         view.addInteraction(pencil)
 
-        for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper, fourTap] as [UIGestureRecognizer] {
+        let scrub = UIPanGestureRecognizer(target: coordinator, action: #selector(CanvasCoordinator.handleScrub(_:)))
+        scrub.minimumNumberOfTouches = 3
+        scrub.maximumNumberOfTouches = 3
+
+        for gesture in [pinch, pan, rotation, undoTap, redoTap, undoHold, eyedropper, fourTap, scrub] as [UIGestureRecognizer] {
             gesture.delegate = coordinator
             // Gestes au doigt seulement : le Pencil ne fait que dessiner.
             gesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -1333,6 +1367,14 @@ struct CanvasScreen: View {
                 .padding(.bottom, 14)
                 .frame(maxHeight: .infinity, alignment: .bottom)
             }
+            if session.showReference, !session.interfaceHidden {
+                ReferenceWindow(session: session)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 90)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            }
+            ColorDropSwatch(session: session)
+                .ignoresSafeArea()
             if session.showSizePreview {
                 BrushSizePreview(session: session)
                     .allowsHitTesting(false)

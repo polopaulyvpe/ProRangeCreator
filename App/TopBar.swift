@@ -113,6 +113,10 @@ struct TopBar: View {
                     .frame(width: 34, height: 34)
                     .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 2))
             }
+            // Glisser la pastille sur la toile : remplissage là où on la lâche.
+            .simultaneousGesture(DragGesture(minimumDistance: 16, coordinateSpace: .global)
+                .onChanged { session.colorDragLocation = $0.location }
+                .onEnded { session.dropColor(at: $0.location) })
             .popover(isPresented: $session.showColorPicker, arrowEdge: .top) { ColorPanel(session: session) }
         }
         .padding(.horizontal, 18)
@@ -448,6 +452,7 @@ struct ActionsPanel: View {
                     PanelRowLabel("Symétrie : \(session.symmetry.kind.label)")
                 }
                 PanelRow("Tourner la sphère…") { session.showActions = false; session.showRotation = true }
+                PanelToggle("Fenêtre de référence", isOn: $session.showReference)
             }
             PanelSection {
                 Menu {
@@ -533,6 +538,8 @@ struct ActionsPanel: View {
                 helpLine("Tap 3 doigts", session.preferences.threeFingerDoubleTap.label)
                 helpLine("Tap 4 doigts", session.preferences.fourFingerTap.label)
                 helpLine("Appui long au doigt", "pipette")
+                helpLine("Frotter à 3 doigts", "effacer le calque")
+                helpLine("Glisser la pastille", "remplir là où on lâche la couleur")
                 helpLine("Déplier", "voir tout le panorama à plat")
             }
             .padding(14)
