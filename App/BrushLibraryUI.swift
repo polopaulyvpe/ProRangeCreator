@@ -72,15 +72,19 @@ extension CanvasSession {
         }
     }
 
-    /// .brush, .brushset (Procreate) ou .prbrush : ajoutés à la bibliothèque ; renvoie les pinceaux lus pour le compte rendu.
+    /// .brush, .brushset (Procreate), .abr, .gbr, .gih, .vbr, .kpp, .bundle ou .prbrush : ajoutés à la bibliothèque ; renvoie les pinceaux lus pour le compte rendu.
     func importBrushFiles(_ urls: [URL]) -> [BrushPreset] {
         var imported: [BrushPreset] = []
         for url in urls {
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             do {
-                if url.pathExtension.lowercased() == "prbrush" {
+                let ext = url.pathExtension.lowercased()
+                if ext == "prbrush" {
                     imported.append(try NativeBrushFile.preset(from: Data(contentsOf: url)))
+                } else if ForeignBrushImport.extensions.contains(ext) {
+                    // Photoshop, GIMP, Krita.
+                    imported += try ForeignBrushImport.read(url)
                 } else {
                     imported += try ProcreateBrushImport.read(url)
                 }
@@ -125,7 +129,8 @@ struct BrushLibrarySheet: View {
     private var pickerTypes: [UTType] {
         switch request {
         case .brushes:
-            ["brush", "brushset", "prbrush"].compactMap { UTType(filenameExtension: $0) } + [.zip, .data]
+            (["brush", "brushset", "prbrush"] + ForeignBrushImport.extensions.sorted()).compactMap { UTType(filenameExtension: $0) }
+                + [.zip, .data]
         default:
             [.image]
         }
@@ -232,11 +237,11 @@ struct BrushLibrarySheet: View {
                             brushes = session.listBrushes()
                         }
                     }
-                    Button("Importer .brush, .brushset ou .prbrush…", systemImage: "square.and.arrow.down") { open(.brushes) }
+                    Button("Importer un pinceau (Procreate, Photoshop, GIMP, Krita, .prbrush)…", systemImage: "square.and.arrow.down") { open(.brushes) }
                 } header: {
                     Text("Mes pinceaux")
                 } footer: {
-                    Text("Import Procreate au mieux : forme, grain, taille, opacité, espacement, pression, rotation et grain sont repris ; le reste est listé comme ignoré.")
+                    Text("Import au mieux. Procreate : forme, grain, taille, opacité, espacement, pression, rotation. Photoshop (.abr), GIMP (.gbr, .gih, .vbr), Krita (.kpp, .bundle) : forme, espacement, angle, rondeur, dureté. Le reste est listé comme ignoré.")
                 }
                 if !report.isEmpty {
                     Section("Dernier import") {

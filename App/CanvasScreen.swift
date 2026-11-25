@@ -989,10 +989,10 @@ final class CanvasMTKView: MTKView {
         return min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2)))
     }
 
-    /// Position du trait : précise au sous-point pour le Pencil (`location` est arrondie au point d'écran,
+    /// Position du trait : précise au sous-point, Pencil comme doigt (`location` est arrondie au point d’écran,
     /// ce qui crénelle les traits lents et fins).
     private func point(_ touch: UITouch) -> CGPoint {
-        touch.type == .pencil ? touch.preciseLocation(in: self) : touch.location(in: self)
+        touch.preciseLocation(in: self)
     }
 
     /// Pression normalisée du Pencil ; le doigt n'en a pas (1).

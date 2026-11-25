@@ -3,8 +3,9 @@
 ## ProCraft
 
 Le lissage du tracé (`Packages/ProRangeKit/Sources/PRCore/StrokeStabilizer.swift` : filtrage du mouvement, StreamLine,
-stabilisation, lissage de la pression) et la mesure de la vitesse du trait (`StrokeSpeed`) sont portés en Swift depuis
-le moteur de ProCraft, `crates/engine/src/stroke.rs` (commit `b5486737`, 25 novembre 2026) :
+stabilisation, lissage de la pression), la mesure de la vitesse du trait (`StrokeSpeed`) et la lecture des pinceaux
+Photoshop, GIMP et Krita (`Packages/ProRangeKit/Sources/PRImaging/ForeignBrushFiles.swift`) sont portés en Swift depuis
+le moteur de ProCraft, `crates/engine/src/stroke.rs`, `abr.rs`, `gbr.rs` et `krita.rs` (commit `b5486737`, 25 novembre 2026) :
 <https://github.com/artcraft-android/procraft>.
 
 ProCraft est sous licence MIT ou Apache-2.0, au choix ; nous l'utilisons sous la licence MIT :

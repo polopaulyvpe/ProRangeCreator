@@ -818,7 +818,7 @@ final class BrushPadUIView: UIView {
     private var lastTime: TimeInterval = 0
 
     private func add(_ touch: UITouch, first: Bool = false) {
-        let p = touch.type == .pencil ? touch.preciseLocation(in: self) : touch.location(in: self)
+        let p = touch.preciseLocation(in: self)
         let pressure = touch.type == .pencil && touch.maximumPossibleForce > 0 ? Double(touch.force / touch.maximumPossibleForce) : 1
         let tilt = touch.type == .pencil ? min(1, max(0, 1 - Double(touch.altitudeAngle) / (.pi / 2))) : 0
         let point = SIMD2<Double>(Double(p.x * scale), Double(p.y * scale))
