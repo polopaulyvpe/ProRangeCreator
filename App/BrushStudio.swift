@@ -298,6 +298,11 @@ struct BrushStudioView: View {
                     .font(.caption).foregroundStyle(.white.opacity(0.5))
             }
             StudioCard {
+                StudioSlider("Bords humides", value: $draft.wetEdges, range: 0...1)
+                Text("Le bord du trait ressort plus foncé que son centre, comme une aquarelle qui sèche.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.5))
+            }
+            StudioCard {
                 Toggle("Mode de fusion : Multiplier", isOn: $draft.multiplyBlend)
                 Text("La couleur fonce la peinture déjà posée au lieu de la couvrir, comme de l'encre ou de l'aquarelle (Minke). Sur une zone vide, rien ne change.")
                     .font(.caption).foregroundStyle(.white.opacity(0.5))

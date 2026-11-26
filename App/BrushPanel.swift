@@ -43,7 +43,13 @@ struct BrushPanel: View {
     @State private var saved: [LibraryBrush] = []
 
     /// Base, puis les jeux de ProCraft (aquarelles d'abord), nos pinceaux du ciel, et « Mes pinceaux ».
-    private var categories: [String] { ["Base"] + ProCraftLibrary.sets.map(.name) + BuiltInBrushes.categories + ["Mes pinceaux"] }
+    private var categories: [String] {
+        var names: [String] = ["Base"]
+        names.append(contentsOf: ProCraftLibrary.sets.map { $0.name })
+        names.append(contentsOf: BuiltInBrushes.categories)
+        names.append("Mes pinceaux")
+        return names
+    }
 
     /// Encre : bord net, pointes effilées au début et à la fin, léger StreamLine, pression douce.
     static var ink: BrushSettings {
@@ -70,7 +76,7 @@ struct BrushPanel: View {
         default:
             if let set = ProCraftLibrary.sets.first(where: { $0.name == category }) {
                 ProCraftLibrary.brushes(of: set).enumerated().map { i, preset in
-                    BrushEntry(id: "(set.id)/(i)", name: preset.name, settings: preset.settings)
+                    BrushEntry(id: "\(set.id)/\(i)", name: preset.name, settings: preset.settings)
                 }
             } else {
                 BuiltInBrushes.all.filter { $0.category == category }.map { BrushEntry(id: $0.id, name: $0.name, settings: $0.settings) }
@@ -188,7 +194,7 @@ struct BrushPanel: View {
         case "Végétation": "leaf"
         case "Tampons": "seal"
         case let name where name.hasPrefix("Aquarelle"): "drop"
-        case let name where ProCraftLibrary.sets.contains { $0.name == name }: "paintbrush"
+        case let name where ProCraftLibrary.sets.contains(where: { $0.name == name }): "paintbrush"
         default: "folder"
         }
     }

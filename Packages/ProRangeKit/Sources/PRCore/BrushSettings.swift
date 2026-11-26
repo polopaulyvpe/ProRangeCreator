@@ -166,8 +166,12 @@ public struct BrushSettings: Equatable, Sendable {
     public func strokeStyle(color: SIMD3<Float>, mode: DabMode) -> StrokeStyle {
         StrokeStyle(color: color, mode: mode, capsPrimary: rendering.capsOpacity,
                     capsSecondary: secondary?.rendering.capsOpacity ?? true, dual: secondary == nil ? nil : dualBlendMode,
-                    varyingColor: mode == .paint && varyingColor, multiply: mode == .paint && multiplyBlend)
+                    varyingColor: mode == .paint && varyingColor, multiply: mode == .paint && multiplyBlend,
+                    wetEdges: Float(min(1, max(0, wetEdges))))
     }
+
+    /// Bords humides (Rendu) : le bord du trait ressort plus foncé, comme une aquarelle ; 0 = aucun.
+    public var wetEdges: Double = 0
 
     // MARK: Dynamique
     /// Taille et opacité réduites (ou augmentées si négatif) quand le trait va vite.

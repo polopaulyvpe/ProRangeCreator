@@ -27,6 +27,9 @@ jobs:
       - name: swift test
         working-directory: Packages/ProRangeKit
         run: swift test --parallel --skip PerformanceBenchmarks
+      - name: Rapport des pinceaux ProCraft
+        if: always()
+        run: cat /tmp/procraft-report.txt || true
       # Seul, non parallèle et optimisé comme l'app (Release) : chronométrages réalistes (lignes « PERF »).
       - name: Banc d'essai de performance
         working-directory: Packages/ProRangeKit

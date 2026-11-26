@@ -181,4 +181,22 @@ final class StrokeMaskTests: XCTestCase {
         XCTAssertEqual(double.resolvedSecondary?.radiusDegrees, 6, "le secondaire suit la taille du principal")
         XCTAssertEqual(double.strokeStyle(color: .one, mode: .paint).dual, .multiply)
     }
+
+    /// Bords humides : un bord adouci (couverture vers 0,7) devient plein, un trait plein s'éclaircit à 0,78 ;
+    /// sans réglage ou sans peinture, rien ne change.
+    func testWetEdgesDarkenTheSoftEdge() {
+        XCTAssertEqual(StrokeMask.wetEdged(1, amount: 1), 0.7828, accuracy: 1e-3)
+        XCTAssertEqual(StrokeMask.wetEdged(0.7, amount: 1), 0.997, accuracy: 3e-3)
+        XCTAssertGreaterThan(StrokeMask.wetEdged(0.7, amount: 1), StrokeMask.wetEdged(1, amount: 1), "le bord ressort")
+        XCTAssertEqual(StrokeMask.wetEdged(0.5, amount: 0), 0.5)
+        XCTAssertEqual(StrokeMask.wetEdged(0, amount: 1), 0)
+        // Continu au raccord du développement limité (x = 0,5).
+        let a: Float = 0.5 / 4.5
+        XCTAssertEqual(StrokeMask.wetEdged(a - 1e-4, amount: 1), StrokeMask.wetEdged(a + 1e-4, amount: 1), accuracy: 1e-3)
+        let style = StrokeStyle(color: .one, wetEdges: 0.5)
+        XCTAssertEqual(StrokeMask.alpha([1, 1, 0, 0], style: style), 1 + 0.5 * (0.7828 - 1), accuracy: 1e-3)
+        var brush = BrushSettings()
+        brush.wetEdges = 0.6
+        XCTAssertEqual(brush.strokeStyle(color: .one, mode: .paint).wetEdges, 0.6, accuracy: 1e-6)
+    }
 }

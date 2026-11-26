@@ -32,7 +32,7 @@ public final class BrushEngine {
     struct GPUStroke {
         var color: SIMD4<Float>    // RGB linéaire non prémultiplié, mode (0 peindre, 1 effacer)
         var options: SIMD4<Float>  // plafond du principal, plafond du secondaire, combinaison (−1 aucune), espace (1 linéaire)
-        var lock: SIMD4<Float>     // verrou alpha, couleur par texel (texture 3), fusion Multiplier, inutilisé
+        var lock: SIMD4<Float>     // verrou alpha, couleur par texel (texture 3), fusion Multiplier, bords humides
     }
 
     public let device: any MTLDevice
@@ -319,7 +319,7 @@ public final class BrushEngine {
         var stroke = GPUStroke(color: SIMD4<Float>(style.color.x, style.color.y, style.color.z, style.mode == .erase ? 1 : 0),
                                options: SIMD4<Float>(style.capsPrimary ? 1 : 0, style.capsSecondary ? 1 : 0,
                                                      Float(style.dual?.index ?? -1), space == .linear ? 1 : 0),
-                               lock: SIMD4<Float>(alphaLock ? 1 : 0, color == nil ? 0 : 1, style.multiply ? 1 : 0, 0))
+                               lock: SIMD4<Float>(alphaLock ? 1 : 0, color == nil ? 0 : 1, style.multiply ? 1 : 0, style.wetEdges))
         let coords = tiles.map { SIMD2<Int32>(Int32($0.x), Int32($0.y)) }
         encoder.setComputePipelineState(applyPipeline)
         encoder.setTexture(layer, index: 0)
@@ -518,6 +518,20 @@ public final class BrushEngine {
         }
     }
 
+    /// Bords humides (voir `StrokeMask.wetEdged`).
+    static float wetEdged(float a, float amount) {
+        if (amount <= 0.0 || a <= 0.0) { return a; }
+        float x = 4.5 * a;
+        float pooled;
+        if (x < 0.5) {
+            float x2 = x * x;
+            pooled = x2 * (1.0 / 6.0 - x2 / 120.0 + x2 * x2 / 5040.0);
+        } else {
+            pooled = 1.0 - abs(sin(x) / x);
+        }
+        return clamp(a + min(1.0, amount) * (pooled - a), 0.0, 1.0);
+    }
+
     static float4 lockAlpha(float4 dst, float4 original) {
         return (original.w > 0.0 && dst.w > 0.0) ? float4(dst.rgb / dst.w * original.w, original.w) : original;
     }
@@ -601,6 +615,7 @@ public final class BrushEngine {
             float s = stroke.options.y > 0.5 ? min(m.z, m.w) : m.z;
             alpha = combine(dual, alpha, s);
         }
+        alpha = wetEdged(alpha, stroke.lock.w);
         float4 dst = before;
         if (alpha > 0.0) {
             float3 rgb = stroke.lock.y > 0.5 ? colors.read(p).rgb : stroke.color.rgb;

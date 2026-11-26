@@ -106,9 +106,12 @@ public struct StrokeStyle: Sendable, Equatable {
     public var varyingColor: Bool
     /// Mode de fusion Multiplier (Atelier > Rendu > Mode de fusion) ; sinon Normal.
     public var multiply: Bool
+    /// Bords humides (aquarelle), dans [0, 1] : voir `StrokeMask.wetEdged`.
+    public var wetEdges: Float
 
     public init(color: SIMD3<Float>, mode: DabMode = .paint, capsPrimary: Bool = true, capsSecondary: Bool = true,
-                dual: DualBlendMode? = nil, varyingColor: Bool = false, multiply: Bool = false) {
+                dual: DualBlendMode? = nil, varyingColor: Bool = false, multiply: Bool = false, wetEdges: Float = 0) {
+        self.wetEdges = wetEdges
         self.color = color
         self.mode = mode
         self.capsPrimary = capsPrimary
@@ -154,9 +157,27 @@ public enum StrokeMask {
     @inline(__always)
     public static func alpha(_ m: SIMD4<Float>, style: StrokeStyle) -> Float {
         let p = style.capsPrimary ? min(m.x, m.y) : m.x
-        guard let dual = style.dual else { return p }
+        guard let dual = style.dual else { return wetEdged(p, amount: style.wetEdges) }
         let s = style.capsSecondary ? min(m.z, m.w) : m.z
-        return dual.combine(p, s)
+        return wetEdged(dual.combine(p, s), amount: style.wetEdges)
+    }
+
+    /// Bords humides, d'après ProCraft (`pooled_over`, MIT, voir NOTICE.md) : la peinture « s'accumule » au bord du trait.
+    /// L'opacité accumulée `a` passe par 1 − |sin(4,5 a) / (4,5 a)| : vers 0,7 (le bord adouci d'un trait) elle devient
+    /// pleine, alors qu'un trait plein retombe à 0,78. Le bord ressort plus foncé que le centre, comme une aquarelle
+    /// qui sèche. `amount` mélange cet effet à l'opacité d'origine.
+    @inline(__always)
+    public static func wetEdged(_ a: Float, amount: Float) -> Float {
+        guard amount > 0, a > 0 else { return a }
+        let x = 4.5 * a
+        let pooled: Float
+        if x < 0.5 {
+            let x2 = x * x
+            pooled = x2 * (1.0 / 6 - x2 / 120 + x2 * x2 / 5040)
+        } else {
+            pooled = 1 - abs(sin(x) / x)
+        }
+        return min(1, max(0, a + min(1, amount) * (pooled - a)))
     }
 
     /// Pixel du calque (RGBA linéaire prémultiplié) : l'original d'avant le trait, avec le trait posé d'opacité `alpha`,

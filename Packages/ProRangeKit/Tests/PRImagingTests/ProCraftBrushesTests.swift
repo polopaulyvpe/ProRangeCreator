@@ -14,6 +14,8 @@ final class ProCraftBrushesTests: XCTestCase {
     func testEverySetReadsCompletely() throws {
         let index = try String(contentsOf: folder.appendingPathComponent("procraft-sets.tsv"), encoding: .utf8)
         var total = 0
+        // Écrit dans un fichier que la CI affiche (en parallèle, la sortie des tests réussis est masquée).
+        var report: [String] = []
         var ignored: [String: Int] = [:]
         for line in index.split(separator: "\n") {
             let parts = line.split(separator: "\t").map(String.init)
@@ -38,13 +40,15 @@ final class ProCraftBrushesTests: XCTestCase {
             }
             if parts[1] == "Watercolors" {
                 for preset in presets {
-                    print("PROCRAFT aquarelle \(preset.name) : repris \(preset.mapped.count), ignorés \(preset.ignored.joined(separator: " | "))")
+                    report.append("PROCRAFT aquarelle \(preset.name) : repris \(preset.mapped.count), ignorés \(preset.ignored.joined(separator: " | "))")
                 }
             }
             total += presets.count
         }
-        print("PROCRAFT \(total) pinceaux lus")
-        for (key, n) in ignored.sorted(by: { $0.value > $1.value }).prefix(60) { print("PROCRAFT ignoré \(n) × \(key)") }
+        report.append("PROCRAFT \(total) pinceaux lus")
+        for (key, n) in ignored.sorted(by: { $0.value > $1.value }).prefix(60) { report.append("PROCRAFT ignoré \(n) × \(key)") }
+        let text = report.joined(separator: "\n")
+        try? text.write(toFile: "/tmp/procraft-report.txt", atomically: true, encoding: .utf8)
         XCTAssertGreaterThan(total, 500)
     }
 }

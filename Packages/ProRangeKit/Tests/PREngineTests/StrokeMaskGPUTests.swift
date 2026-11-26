@@ -30,9 +30,11 @@ final class StrokeMaskGPUTests: XCTestCase {
             secondary.secondary = true
             dabs.append(secondary)
         }
-        let cases: [(BlendSpace, DualBlendMode?)] = [(.perceptual, .hardMix), (.linear, .multiply), (.perceptual, nil)]
-        for (space, dual) in cases {
-            let style = StrokeStyle(color: [0.9, 0.4, 0.1], capsPrimary: true, capsSecondary: false, dual: dual)
+        // Le dernier cas ajoute les bords humides (aquarelle).
+        let cases: [(BlendSpace, DualBlendMode?, Float)] = [(.perceptual, .hardMix, 0), (.linear, .multiply, 0), (.perceptual, nil, 0),
+                                                            (.perceptual, nil, 0.8)]
+        for (space, dual, wet) in cases {
+            let style = StrokeStyle(color: [0.9, 0.4, 0.1], capsPrimary: true, capsSecondary: false, dual: dual, wetEdges: wet)
 
             let layer = TiledLayer(name: "cpu", width: width, height: height, format: .rgba16Float)
             layer.fill(background)

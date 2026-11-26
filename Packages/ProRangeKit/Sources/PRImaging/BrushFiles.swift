@@ -145,7 +145,7 @@ public enum ProcreateBrushImport {
         "textureApplication", "grainBlendMode", "grainBlendModeExtended", "plotJitterLongitudinal", "plotSpacingSpeed",
         "dynamicsMix", "dynamicsLoad", "dynamicsPressureMix", "dynamicsWetAccumulation", "dynamicsMixSoftening",
         "dynamicsBlur", "dynamicsBlurJitter", "dynamicsWetnessJitter", "jitterShapeRoundness", "jitterShapeRoundnessX",
-    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth", "shapeInverted", "blendMode", "dynamicsPressureShapeRoundness",
+    ] + colorAndPencilKeys.map(\.0) + ["shapeAzimuth", "shapeInverted", "blendMode", "wetEdgesAmount","dynamicsPressureShapeRoundness",
         "dynamicsPressureShapeRoundnessMinimum", "dynamicsTiltShapeRoundness", "dynamicsTiltShapeRoundnessMinimum"])
 
     /// Dynamique de couleur et Apple Pencil : clé Procreate → réglage (valeurs de l'archive dans [0, 1]).
@@ -274,6 +274,10 @@ public enum ProcreateBrushImport {
         settings.rendering = recursive ? (maxTransfer ? .intenseBlending : .uniformBlending)
             : (maxTransfer ? .intenseGlaze : (modulated ? .uniformGlaze : .lightGlaze))
         mapped.append("rendu → \(settings.rendering.label.lowercased())")
+        if let wet = number("wetEdgesAmount"), wet > 0 {
+            settings.wetEdges = min(1, wet)
+            mapped.append("bords humides → \(pct(wet))")
+        }
         // Rendu > Mode de fusion : codes des modes de calque (1 = Multiplier, vérifié sur Minke). Les autres ne sont pas gérés.
         if let mode = number("blendMode") {
             if Int(mode) == 1 {
@@ -616,7 +620,7 @@ public enum NativeBrushFile {
         ("tiltOpacity", \.tiltOpacity), ("tiltSize", \.tiltSize), ("tiltAngleDegrees", \.tiltAngleDegrees),
         ("maxSizeDegrees", \.maxSizeDegrees), ("minSizeDegrees", \.minSizeDegrees),
         ("maxOpacity", \.maxOpacity), ("minOpacity", \.minOpacity),
-        ("flow", \.flow), ("pressureFlowAmount", \.pressureFlowAmount), ("secondaryScale", \.secondaryScale),
+        ("flow", \.flow), ("wetEdges", \.wetEdges), ("pressureFlowAmount", \.pressureFlowAmount), ("secondaryScale", \.secondaryScale),
         ("roundnessJitter", \.roundnessJitter), ("roundnessJitterX", \.roundnessJitterX), ("longitudinalJitter", \.longitudinalJitter), ("speedSpacing", \.speedSpacing), ("grainMovement", \.grainMovement),
         ("wetDilution", \.wetDilution), ("wetCharge", \.wetCharge), ("wetAttack", \.wetAttack), ("wetPull", \.wetPull),
         ("wetGrade", \.wetGrade), ("wetBlur", \.wetBlur), ("wetBlurJitter", \.wetBlurJitter), ("wetnessJitter", \.wetnessJitter),
