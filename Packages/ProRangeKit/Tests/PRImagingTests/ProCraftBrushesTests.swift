@@ -1,6 +1,7 @@
 import Foundation
 import PRCore
 @testable import PRImaging
+import PRStorage
 import XCTest
 
 /// Les jeux de pinceaux de ProCraft livrés dans l'app (App/ProCraftBrushes) : chacun se lit en entier avec notre import.
