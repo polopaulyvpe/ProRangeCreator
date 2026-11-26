@@ -1,0 +1,44 @@
+# Lancé à la main : fait écrire par ProCraft lui-même (MIT ou Apache-2.0, voir NOTICE.md) ses jeux de pinceaux livrés,
+# en fichiers .brushset (réglages, formes et grains), à un commit fixé. Le résultat est un artefact, versionné ensuite
+# dans App/ProCraftBrushes.
+name: Pinceaux ProCraft
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit de github.com/artcraft-android/procraft
+        default: cab1062d358e5628650ea581151c2f0e0e858a1c
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  dump:
+    name: Écrire les jeux de pinceaux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ProCraft au commit choisi
+        run: |
+          git clone https://github.com/artcraft-android/procraft.git procraft
+          git -C procraft checkout "${{ inputs.commit }}"
+      - name: Rust stable
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+      - name: Outil d'écriture des jeux
+        run: cat tools/procraft/dump_sets.rs >> procraft/crates/core/src/brush_files.rs
+      - name: Écrire les jeux
+        working-directory: procraft
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          PROCRANGE_DUMP="$GITHUB_WORKSPACE/out" cargo test -p procraft-core --lib dump_shipped_sets -- --ignored --nocapture
+          ls -la "$GITHUB_WORKSPACE/out"
+          cat "$GITHUB_WORKSPACE/out/sets.tsv"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: procraft-brushsets
+          path: out
