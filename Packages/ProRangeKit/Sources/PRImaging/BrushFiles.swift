@@ -458,9 +458,9 @@ public enum ProcreateBrushImport {
             settings.grainSource = BuiltInBrushes.substituteGrain
             ignored.append("grain « \((path as NSString).lastPathComponent) » interne à Procreate, absent du fichier : substitut (importe une image pour le remplacer)")
         }
-        let others = brush.keys.filter { !knownKeys.contains($0) && !$0.hasPrefix("$") }.count
-        if others > 0 {
-            ignored.append("\(others) autres réglages non gérés (mélange humide, dynamique de couleur, inclinaison, effilement, rendu…)")
+        let others = brush.keys.filter { !knownKeys.contains($0) && !$0.hasPrefix("$") }.sorted()
+        if !others.isEmpty {
+            ignored.append("\(others.count) autres réglages non gérés : \(others.joined(separator: ", "))")
         }
         settings.name = name
         settings.author = string("authorName") ?? ""

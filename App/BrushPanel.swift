@@ -42,7 +42,8 @@ struct BrushPanel: View {
     @State private var category = "Base"
     @State private var saved: [LibraryBrush] = []
 
-    private var categories: [String] { ["Base"] + BuiltInBrushes.categories + ["Mes pinceaux"] }
+    /// Base, puis les jeux de ProCraft (aquarelles d'abord), nos pinceaux du ciel, et « Mes pinceaux ».
+    private var categories: [String] { ["Base"] + ProCraftLibrary.sets.map(.name) + BuiltInBrushes.categories + ["Mes pinceaux"] }
 
     /// Encre : bord net, pointes effilées au début et à la fin, léger StreamLine, pression douce.
     static var ink: BrushSettings {
@@ -67,7 +68,13 @@ struct BrushPanel: View {
         case "Mes pinceaux":
             saved.map { BrushEntry(id: "mes/\($0.url.lastPathComponent)", name: $0.preset.name, settings: $0.preset.settings, file: $0.url) }
         default:
-            BuiltInBrushes.all.filter { $0.category == category }.map { BrushEntry(id: $0.id, name: $0.name, settings: $0.settings) }
+            if let set = ProCraftLibrary.sets.first(where: { $0.name == category }) {
+                ProCraftLibrary.brushes(of: set).enumerated().map { i, preset in
+                    BrushEntry(id: "(set.id)/(i)", name: preset.name, settings: preset.settings)
+                }
+            } else {
+                BuiltInBrushes.all.filter { $0.category == category }.map { BrushEntry(id: $0.id, name: $0.name, settings: $0.settings) }
+            }
         }
     }
 
@@ -180,6 +187,8 @@ struct BrushPanel: View {
         case "Atmosphère": "sun.haze"
         case "Végétation": "leaf"
         case "Tampons": "seal"
+        case let name where name.hasPrefix("Aquarelle"): "drop"
+        case let name where ProCraftLibrary.sets.contains { $0.name == name }: "paintbrush"
         default: "folder"
         }
     }
