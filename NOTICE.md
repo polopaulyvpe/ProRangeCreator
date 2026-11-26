@@ -27,5 +27,9 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER I
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Rien d'autre n'est repris de ProCraft : ni ses pinceaux fournis (calqués sur ceux de Procreate), ni ses icônes, ni ses
-noms.
+**Pinceaux livrés** (`App/ProCraftBrushes`) : les 38 jeux livrés avec ProCraft (598 pinceaux), écrits en `.brushset` par
+ProCraft lui-même au commit `cab1062d` (job « Pinceaux ProCraft » de la CI, `tools/procraft/dump_sets.rs`). Leurs
+réglages, leurs noms et leurs formes et grains (dessinés par le code de ProCraft) sont de ProCraft, sous la même
+licence. Les bords humides (`StrokeMask.wetEdged`) reprennent la fonction `pooled_over` de ses shaders.
+
+Rien d'autre n'est repris de ProCraft : ni ses icônes, ni son interface.
